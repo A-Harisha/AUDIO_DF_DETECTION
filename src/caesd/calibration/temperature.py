@@ -14,7 +14,7 @@ class TemperatureCalibrator:
     def __init__(self) -> None:
         self.temperature: float | None = None
 
-    def fit(self, scores: np.ndarray, labels: np.ndarray) -> "TemperatureCalibrator":
+    def fit(self, scores: np.ndarray, labels: np.ndarray) -> TemperatureCalibrator:
         from scipy.optimize import minimize_scalar
 
         scores = np.asarray(scores, dtype=np.float64)

@@ -5,6 +5,8 @@ ground-truth manipulated regions (seconds).
 """
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 
 
@@ -28,7 +30,7 @@ def segment_iou(
         return 1.0
     grid = np.unique(np.concatenate([np.array(predicted + ground_truth).ravel(), [0.0]]))
     inter = 0.0
-    for a, b in zip(grid[:-1], grid[1:]):
+    for a, b in pairwise(grid):
         mid = 0.5 * (a + b)
         in_pred = any(s <= mid <= e for s, e in predicted)
         in_gt = any(s <= mid <= e for s, e in ground_truth)

@@ -14,15 +14,15 @@ from .misleading_evidence import misleading_evidence_rates
 from .operating_point import far_frr_at_threshold, miss_at_far, threshold_at_far, threshold_transfer
 
 __all__ = [
+    "act_dcf",
     "bootstrap_ci",
     "cllr",
-    "min_cllr",
-    "act_dcf",
-    "min_dcf",
     "compute_det_curve",
     "compute_eer",
-    "misleading_evidence_rates",
     "far_frr_at_threshold",
+    "min_cllr",
+    "min_dcf",
+    "misleading_evidence_rates",
     "miss_at_far",
     "threshold_at_far",
     "threshold_transfer",

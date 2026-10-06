@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .backbone import Backbone
 from .block_a_condition import ConditionEncoder

@@ -18,7 +18,7 @@ class MondrianConformalGate:
         self.alpha = alpha
         self.quantiles: dict[str, float] = {}  # per-group nonconformity threshold
 
-    def fit(self, probs: np.ndarray, true_labels: np.ndarray, groups: np.ndarray) -> "MondrianConformalGate":
+    def fit(self, probs: np.ndarray, true_labels: np.ndarray, groups: np.ndarray) -> MondrianConformalGate:
         """Calibrate per-group thresholds. Nonconformity = 1 - p(true class)."""
         probs = np.asarray(probs, dtype=np.float64)
         true_labels = np.asarray(true_labels).astype(int)
@@ -39,7 +39,7 @@ class MondrianConformalGate:
         """
         probs = np.asarray(probs, dtype=np.float64)
         groups = np.asarray(groups).astype(str)
-        n, k = probs.shape
+        n = probs.shape[0]
         nonconf = 1.0 - probs
         sets: list[np.ndarray] = []
         abstain = np.zeros(n, dtype=bool)

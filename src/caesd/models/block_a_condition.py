@@ -9,7 +9,7 @@ pooled features [B, D]  ->  {condition [B, C], channel_logits, language_logits, 
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class ConditionEncoder(nn.Module):

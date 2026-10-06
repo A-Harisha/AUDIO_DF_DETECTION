@@ -18,7 +18,7 @@ class LookupTableCalibrator:
         self.min_per_cell = min_per_cell
         self.cells: dict[str, LogisticCalibrator] = {}
 
-    def fit(self, scores: np.ndarray, labels: np.ndarray, conditions: np.ndarray) -> "LookupTableCalibrator":
+    def fit(self, scores: np.ndarray, labels: np.ndarray, conditions: np.ndarray) -> LookupTableCalibrator:
         scores = np.asarray(scores, dtype=np.float64)
         labels = np.asarray(labels)
         conditions = np.asarray(conditions)

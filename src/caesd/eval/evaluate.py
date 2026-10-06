@@ -27,7 +27,7 @@ def evaluate_scores(
     llr = df[llr_col].to_numpy(dtype=float) if llr_col in df else raw
     eer, _ = compute_eer(raw, labels)
     result = {
-        "n": int(len(df)),
+        "n": len(df),
         "eer": eer,
         "min_dcf": min_dcf(raw, labels),
         "act_dcf": act_dcf(llr, labels),

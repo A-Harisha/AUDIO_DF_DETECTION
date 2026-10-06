@@ -6,7 +6,7 @@ Output: features  [B, L, D]  (L frames, D = feature_dim)
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Multilingual front end helps cross-lingual transfer; WavLM is the config swap.
 DEFAULT_XLSR = "facebook/wav2vec2-xls-r-300m"
@@ -24,7 +24,7 @@ class Backbone(nn.Module):
     @classmethod
     def from_pretrained(
         cls, name: str = DEFAULT_XLSR, freeze: bool = True, lora_rank: int = 16
-    ) -> "Backbone":
+    ) -> Backbone:
         from transformers import AutoModel
 
         model = AutoModel.from_pretrained(name)
@@ -40,7 +40,7 @@ class Backbone(nn.Module):
         return cls(model, feature_dim)
 
     @classmethod
-    def tiny(cls, feature_dim: int = 32) -> "Backbone":
+    def tiny(cls, feature_dim: int = 32) -> Backbone:
         """Small randomly-initialised wav2vec2 for offline forward-pass tests (no download)."""
         from transformers import Wav2Vec2Config, Wav2Vec2Model
 

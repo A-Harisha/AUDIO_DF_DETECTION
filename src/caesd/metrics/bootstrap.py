@@ -1,7 +1,7 @@
 """Bootstrap confidence intervals. A 0.2% EER difference often means nothing without one."""
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 

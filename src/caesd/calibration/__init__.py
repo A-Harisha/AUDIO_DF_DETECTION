@@ -4,4 +4,4 @@ from .logistic import LogisticCalibrator
 from .lookup_table import LookupTableCalibrator
 from .temperature import TemperatureCalibrator
 
-__all__ = ["LogisticCalibrator", "TemperatureCalibrator", "LookupTableCalibrator"]
+__all__ = ["LogisticCalibrator", "LookupTableCalibrator", "TemperatureCalibrator"]

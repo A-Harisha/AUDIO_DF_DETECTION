@@ -13,7 +13,7 @@ class LogisticCalibrator:
         self.a: float | None = None
         self.b: float | None = None
 
-    def fit(self, scores: np.ndarray, labels: np.ndarray) -> "LogisticCalibrator":
+    def fit(self, scores: np.ndarray, labels: np.ndarray) -> LogisticCalibrator:
         from sklearn.linear_model import LogisticRegression
 
         scores = np.asarray(scores, dtype=np.float64).reshape(-1, 1)
