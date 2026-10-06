@@ -1,0 +1,5 @@
+# XLS-R: multilingual front end, helps cross-lingual transfer. Default backbone.
+name: facebook/wav2vec2-xls-r-300m
+freeze: true
+lora_rank: 16
+feature_dim: 1024

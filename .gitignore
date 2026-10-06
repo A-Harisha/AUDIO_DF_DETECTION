@@ -1,0 +1,33 @@
+# Environments
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+
+# Experiment outputs, logs, checkpoints
+experiments/
+outputs/
+multirun/
+*.ckpt
+*.pt
+*.pth
+runs/
+wandb/
+
+# Data (never commit audio or datasets)
+data/
+datasets/
+*.wav
+*.flac
+*.mp3
+*.opus
+*.amr
+*.aac
+condition_grid_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

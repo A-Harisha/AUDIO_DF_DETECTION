@@ -1,0 +1,8 @@
+# The condition grid. FROZEN after Phase 0 -- never edit, or the Phase 1 baselines stop being
+# comparable, and they are the only reference point for every later phase.
+codecs: [clean, mp3, opus, amr, speex8k, aac]
+bitrates_kbps: [16, 32]
+snr_db: [20.0, 10.0, 0.0]
+reverb: [false, true]
+benign_edits: [denoise, restoration]
+# EnCodec and MP3->EnCodec are added once the neural-codec backend is wired in (see condition_grid.py).

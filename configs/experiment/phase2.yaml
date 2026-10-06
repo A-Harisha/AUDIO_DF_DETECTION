@@ -1,0 +1,12 @@
+# Phase 2 -- the method. Blocks A + C + the five generalization mechanisms. The contrast
+# against the same model with one global calibration is the paper. (Method paper.)
+name: phase2_method
+train:
+  epochs: 20
+  lr: 1.0e-4
+  batch_size: 16
+  max_seconds: 4.0
+  augment: rawboost
+loss_weights: {cls: 1.0, cllr: 1.0, cond: 0.5}
+calibration: condition_dependent   # block C hypernetwork
+protocols: [cross_generator, cross_corpus, cross_lingual, codec_stress, benign_edit, threshold_transfer]

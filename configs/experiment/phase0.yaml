@@ -1,0 +1,13 @@
+# Phase 0 -- falsify the premise. Cheap go/no-go before a year is spent.
+name: phase0_falsify
+# Precomputed AASIST scores on the condition grid: columns = score,label,condition,language,split.
+scores_parquet: experiments/phase0/scores.parquet
+far_target: 0.01            # fix the operating point on clean dev
+# Hold out whole codecs and whole languages so the lookup table has no cell to use.
+holdout_codecs: [speex8k]
+holdout_languages: [te]     # Telugu
+lookup_min_per_cell: 50
+# Go/no-go thresholds: the premise holds if the global-calibration gap is large AND the lookup
+# table leaves much of it open on held-out cells.
+gap_is_large: 0.10          # actDCF - minDCF considered large above this
+lookup_closes_gap: 0.50     # table "closes" the gap if it removes >= this fraction

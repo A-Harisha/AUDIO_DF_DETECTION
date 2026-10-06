@@ -1,0 +1,7 @@
+# Phase 1 -- establish the problem. Global calibration reports confident, wrong LLRs under
+# shift. Produces the per-language / per-codec baselines nobody else reports. (Measurement paper.)
+name: phase1_measurement
+detector: aasist              # a published detector under our protocol
+calibration: global           # one global logistic calibration, fit on clean dev
+protocols: [codec_stress, cross_lingual, threshold_transfer]
+far_target: 0.01

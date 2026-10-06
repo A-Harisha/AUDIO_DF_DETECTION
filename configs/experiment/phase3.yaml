@@ -1,0 +1,6 @@
+# Phase 3 -- the evidence framework. Blocks B + D: sparse-autoencoder evidence and the
+# conformal competence gate. Test faithfulness and coverage. (Evidence paper.)
+name: phase3_evidence
+sae: {n_latents: 256, l1_coeff: 1.0e-3}
+conformal: {alpha: 0.05, groups: [language, codec]}
+protocols: [evidence_faithfulness, shortcut_control]

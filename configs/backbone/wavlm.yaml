@@ -1,0 +1,5 @@
+# WavLM Large: config swap for the backbone. Dominated ASVspoof 5 front ends.
+name: microsoft/wavlm-large
+freeze: true
+lora_rank: 16
+feature_dim: 1024
