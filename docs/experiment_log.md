@@ -62,3 +62,13 @@ for isolating calibration from discrimination. Next data item: **ASVspoof 2019 L
 Two results already banked from this run:
 1. Reproduced the AASIST in-the-wild collapse (clean EER 0.42 ≈ literature 0.4185).
 2. The end-to-end Phase-0 pipeline (prepare → grid → score → falsify) runs on real data.
+
+### 2026-10-06 — ASVspoof 5 base attempt
+
+- ASVspoof 5 protocols confound codec with label (bona fide clean, spoof always AC-coded) in
+  BOTH train and dev; there are no clean spoof clips.
+- Pretrained AASIST on ASVspoof 5 dev (800-clip balanced subset): **EER 0.3575, minDCF 0.985** —
+  another collapse (out-of-domain; AASIST was trained on ASVspoof 2019 LA).
+- Conclusion: the cheap "pretrained AASIST, no training" Phase 0 is not viable on ASVspoof 5.
+  To stay on ASVspoof 5 we must TRAIN a countermeasure (the redesign), with our codec grid
+  applied uniformly to both classes so the model cannot exploit the codec↔label shortcut.
