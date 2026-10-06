@@ -31,9 +31,34 @@ Pipeline is ready. Once In-the-Wild + the IndicSynth subset finish downloading:
 3. `scripts/score_grid.py` → AASIST scores parquet.
 4. `scripts/phase0_falsify.py` → the verdict below.
 
-Record here, after the real run:
+### First run — 2026-10-06 (In-the-Wild base, pretrained AASIST, 500 clips × 6 codec cells)
 
-- [ ] Global-calibration gap (actDCF − minDCF) per condition and per language.
-- [ ] Lookup-table closure on seen cells vs held-out codecs/languages.
-- [ ] Threshold-transfer drift from clean dev to each held-out condition.
-- [ ] **Decision:** GO / NO-GO, with the numbers that justify it.
+Per-condition AASIST discrimination (higher score = bona fide):
+
+| condition | EER | minDCF |
+| --- | --- | --- |
+| clean | 0.424 | 0.932 |
+| mp3_16k | 0.468 | 0.960 |
+| opus_16k | 0.456 | 0.992 |
+| amr_16k | 0.488 | 0.972 |
+| speex8k_16k | 0.472 | 0.984 |
+| aac_16k | 0.484 | 0.976 |
+
+Scores vary (500 unique) and separate in the correct direction (bona mean −0.96 > spoof −1.78);
+sign-flip makes EER worse (0.576). So the pipeline is wired correctly.
+
+**Decision: NO-GO for this data configuration — but this is a corpus-choice result, not a
+falsification of the premise.** Clean EER 0.424 faithfully reproduces the known collapse
+(proposal P1: AASIST 1.89% in-domain → 41.85% on ML-ITW). On In-the-Wild, AASIST's
+**discrimination is already destroyed** (minDCF ≈ 0.93 even clean), so there is no
+"good discrimination + bad calibration" regime on top of which to measure a calibration gap
+(held-out codec gap actDCF−minDCF = 0.008). The falsification harness correctly reports NO-GO.
+
+**Conclusion.** The calibration-gap premise must be tested on a base corpus where AASIST
+discriminates well — ASVspoof 2019 LA (AASIST's in-domain set, ~1% EER) or ASVspoof 5 — with the
+condition grid applied there. In-the-Wild is a held-out *collapse* benchmark, not a valid base
+for isolating calibration from discrimination. Next data item: **ASVspoof 2019 LA**.
+
+Two results already banked from this run:
+1. Reproduced the AASIST in-the-wild collapse (clean EER 0.42 ≈ literature 0.4185).
+2. The end-to-end Phase-0 pipeline (prepare → grid → score → falsify) runs on real data.

@@ -24,8 +24,9 @@ log = get_logger("caesd.prepare")
 def _balance(df: pd.DataFrame, max_per_class: int | None, seed: int) -> pd.DataFrame:
     if max_per_class is None:
         return df
-    return (df.groupby("label", group_keys=False)
-              .apply(lambda g: g.sample(min(len(g), max_per_class), random_state=seed)))
+    # Iterate groups (not groupby.apply, which drops the grouping column in pandas 2.2).
+    parts = [g.sample(min(len(g), max_per_class), random_state=seed) for _, g in df.groupby("label")]
+    return pd.concat(parts).reset_index(drop=True)
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
