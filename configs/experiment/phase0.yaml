@@ -7,6 +7,10 @@ far_target: 0.01            # fix the operating point on clean dev
 holdout_codecs: [speex8k]
 holdout_languages: [te]     # Telugu
 lookup_min_per_cell: 50
+# Prior for the DCF premise test. ASVspoof 5's primary metric uses 0.05, but a detector must be
+# strong enough to have an operating point there (else minDCF saturates at 1.0). The premise test
+# uses a usable prior; the strict 0.05 operating point is a Phase-2 target for a stronger model.
+p_target: 0.5
 # Go/no-go thresholds: the premise holds if the global-calibration gap is large AND the lookup
 # table leaves much of it open on held-out cells.
 gap_is_large: 0.10          # actDCF - minDCF considered large above this

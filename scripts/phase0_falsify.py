@@ -35,6 +35,7 @@ def main(cfg: DictConfig) -> None:
         gap_is_large=exp.gap_is_large,
         lookup_closes_gap=exp.lookup_closes_gap,
         min_per_cell=exp.lookup_min_per_cell,
+        p_target=exp.get("p_target", 0.05),
     )
     log.info("DECISION: %s", result["decision"])
     log.info("REASON:   %s", result["reason"])

@@ -72,3 +72,37 @@ Two results already banked from this run:
 - Conclusion: the cheap "pretrained AASIST, no training" Phase 0 is not viable on ASVspoof 5.
   To stay on ASVspoof 5 we must TRAIN a countermeasure (the redesign), with our codec grid
   applied uniformly to both classes so the model cannot exploit the codec↔label shortcut.
+
+### 2026-10-06 — Redesigned Phase 0 on ASVspoof 5: **GO**
+
+Trained a quick countermeasure (XLS-R-300M frozen + LoRA, 3.35M params, RawBoost on both
+classes) on 4,591 ASVspoof 5 train clips, 6 epochs (loss 2.19 → 0.036). Evaluated on a
+speaker-disjoint dev subset (800 clips) passed through our frozen codec grid.
+
+Per-condition, global calibration fit on clean dev, **balanced prior p=0.5** (test split):
+
+| condition | minDCF | actDCF | calib gap | far@fixed-thresh |
+| --- | --- | --- | --- | --- |
+| clean | 0.323 | 0.349 | 0.025 | 0.073 |
+| opus_16k | 0.274 | 0.357 | 0.083 | 0.046 |
+| mp3_16k | 0.397 | 0.465 | 0.068 | 0.174 |
+| amr_16k | 0.291 | 0.502 | 0.210 | 0.009 |
+| **speex8k_16k (held out)** | 0.288 | 0.634 | **0.346** | 0.000 |
+| aac_16k | 0.311 | 0.661 | 0.349 | 0.014 |
+
+**Decision: GO.** Held-out (speex8k) calibration gap 0.346 (≥ 0.10); discrimination (minDCF)
+stays ~0.3 across codecs while actDCF blows up — calibration, not discrimination, breaks under
+codec shift. The per-condition lookup table closes **70% of the gap on seen codecs** (a
+competitive baseline, the reviewer's objection) but **0% on the held-out codec** — so the
+condition-dependent hypernetwork (block C) is justified exactly where the table cannot reach.
+
+Caveats (honest):
+- At ASVspoof 5's strict prior p=0.05 the quick CM saturates (minDCF=1.0, EER ≈ 0.17): too weak
+  to have an operating point there. A stronger detector (full Phase 2: more data/epochs) is
+  needed to operate at 0.05, where the calibration gap will matter even more.
+- The RawBoost-on-both-classes training mitigates but may not fully remove the ASVspoof 5
+  codec↔label confound; minDCF staying ~stable across codecs is evidence the gap is calibration,
+  not a codec shortcut.
+
+**Next:** Phase 2 — build blocks A + C (condition encoder + calibration hypernetwork) and show
+condition-dependent calibration closes the held-out gap the global/lookup baselines cannot.

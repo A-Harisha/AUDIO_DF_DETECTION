@@ -15,14 +15,14 @@ from ..calibration import LogisticCalibrator, LookupTableCalibrator
 from ..metrics import act_dcf, min_dcf, threshold_transfer
 
 
-def _mean_gap(df: pd.DataFrame, llr_col: str) -> float:
-    """Mean of (actDCF - minDCF) across conditions present in df."""
+def _mean_gap(df: pd.DataFrame, llr_col: str, p_target: float) -> float:
+    """Mean of (actDCF - minDCF) across conditions present in df, at the given prior."""
     gaps = []
     for _, sub in df.groupby("condition"):
         if np.unique(sub["label"]).size < 2:
             continue
-        gaps.append(act_dcf(sub[llr_col].to_numpy(), sub["label"].to_numpy())
-                    - min_dcf(sub["score"].to_numpy(), sub["label"].to_numpy()))
+        gaps.append(act_dcf(sub[llr_col].to_numpy(), sub["label"].to_numpy(), p_target=p_target)
+                    - min_dcf(sub["score"].to_numpy(), sub["label"].to_numpy(), p_target=p_target))
     return float(np.mean(gaps)) if gaps else float("nan")
 
 
@@ -34,6 +34,7 @@ def run_falsification(
     gap_is_large: float = 0.10,
     lookup_closes_gap: float = 0.50,
     min_per_cell: int = 50,
+    p_target: float = 0.05,
 ) -> dict:
     holdout_codecs = holdout_codecs or []
     holdout_languages = holdout_languages or []
@@ -60,9 +61,9 @@ def run_falsification(
     held_mask = test["codec"].isin(holdout_codecs) | test["language"].isin(holdout_languages)
     seen, held = test[~held_mask], test[held_mask]
 
-    gap_global_seen = _mean_gap(seen, "llr_global")
-    gap_lookup_seen = _mean_gap(seen, "llr_lookup")
-    gap_global_held = _mean_gap(held, "llr_global")
+    gap_global_seen = _mean_gap(seen, "llr_global", p_target)
+    gap_lookup_seen = _mean_gap(seen, "llr_lookup", p_target)
+    gap_global_held = _mean_gap(held, "llr_global", p_target)
     frac_closed_seen = (
         (gap_global_seen - gap_lookup_seen) / gap_global_seen if gap_global_seen > 0 else 0.0
     )
