@@ -1,8 +1,0 @@
-[2026-10-06 17:01:12,776][httpx][INFO] - HTTP Request: GET https://huggingface.co/api/models/facebook/wav2vec2-xls-r-300m "HTTP/1.1 200 OK"
-[2026-10-06 17:01:13,194][httpx][INFO] - HTTP Request: HEAD https://huggingface.co/facebook/wav2vec2-xls-r-300m/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
-[2026-10-06 17:01:13,448][httpx][INFO] - HTTP Request: GET https://huggingface.co/api/models/facebook/wav2vec2-xls-r-300m "HTTP/1.1 200 OK"
-[2026-10-06 17:01:13,703][httpx][INFO] - HTTP Request: GET https://huggingface.co/api/models/facebook/wav2vec2-xls-r-300m/commits/main "HTTP/1.1 200 OK"
-[2026-10-06 17:01:13,970][httpx][INFO] - HTTP Request: GET https://huggingface.co/api/models/facebook/wav2vec2-xls-r-300m/discussions?p=0 "HTTP/1.1 200 OK"
-[2026-10-06 17:01:14,301][httpx][INFO] - HTTP Request: GET https://huggingface.co/api/models/facebook/wav2vec2-xls-r-300m/commits/refs%2Fpr%2F36 "HTTP/1.1 200 OK"
-[2026-10-06 17:01:14,543][httpx][INFO] - HTTP Request: HEAD https://huggingface.co/facebook/wav2vec2-xls-r-300m/resolve/refs%2Fpr%2F36/model.safetensors.index.json "HTTP/1.1 404 Not Found"
-[2026-10-06 17:01:14,798][httpx][INFO] - HTTP Request: HEAD https://huggingface.co/facebook/wav2vec2-xls-r-300m/resolve/refs%2Fpr%2F36/model.safetensors "HTTP/1.1 302 Found"

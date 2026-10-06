@@ -31,3 +31,6 @@ condition_grid_cache/
 Thumbs.db
 .idea/
 .vscode/
+
+# Hydra per-run logs written to cwd
+*.log
