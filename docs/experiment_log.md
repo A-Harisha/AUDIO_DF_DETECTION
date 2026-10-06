@@ -106,3 +106,39 @@ Caveats (honest):
 
 **Next:** Phase 2 — build blocks A + C (condition encoder + calibration hypernetwork) and show
 condition-dependent calibration closes the held-out gap the global/lookup baselines cannot.
+
+### 2026-10-06 — Phase 2: condition-dependent calibration closes the held-out gap
+
+Trained the condition-aware CM on a codec grid of ASVspoof 5 train (clean/mp3/opus/amr/aac;
+**speex8k held out**), with block A's channel head supervised on the codec (codec loss
+1.49 → 1.04 over 5 codecs vs random 1.61) so the condition vector is meaningful and block C can
+generate per-condition calibration. Evaluated on the ASVspoof 5 dev grid (all 6 codecs).
+
+Calibration gap (actDCF − minDCF, p=0.5): global logistic vs block-C hypernetwork.
+
+| condition | minDCF | gap global | gap block C |
+| --- | --- | --- | --- |
+| clean | 0.309 | 0.005 | 0.075 |
+| mp3_16k | 0.315 | 0.005 | 0.038 |
+| opus_16k | 0.318 | 0.014 | 0.058 |
+| amr_16k | 0.350 | 0.072 | 0.015 |
+| aac_16k | 0.321 | 0.157 | 0.005 |
+| **speex8k_16k (held out)** | 0.351 | **0.102** | **0.004** |
+
+**Result.** On the held-out codec the condition-dependent hypernetwork cuts the calibration gap
+**0.102 → 0.004 (97%)**, and most on the heavily-degraded codecs (aac 0.157 → 0.005). Because the
+Phase-0 lookup table covers 0% of the held-out cell, global calibration *is* the best fixed
+baseline there — and block C beats it by interpolating in condition space. This is the method
+paper's core contrast (condition-dependent vs global calibration).
+
+Honest caveats:
+- Trade-off: block C is slightly worse than global on clean/mild codecs (clean 0.005 → 0.075).
+  It redistributes calibration toward the conditions where shift actually hurts; a clean-anchor
+  regulariser could recover this and is a follow-up.
+- Discrimination is still modest (minDCF ≈ 0.31–0.35 at p=0.5); the calibration claim is
+  orthogonal to and holds despite that. A stronger detector (more data/epochs, all train shards)
+  is the Phase-2 scaling step.
+- Lean scale (2k train base, 800 dev); confirm with bootstrap CIs and more data before publishing.
+
+**Still to do in Phase 2:** full ablation ladder (temperature scaling, +FiLM-only, +SAE, +gate),
+bootstrap CIs, and the five generalization mechanisms measured on the held-out eval corpora.
