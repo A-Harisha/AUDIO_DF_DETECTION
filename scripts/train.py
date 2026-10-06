@@ -36,16 +36,23 @@ def main(cfg: DictConfig) -> None:
     loader = DataLoader(dataset, batch_size=cfg.data.batch_size, shuffle=True,
                         num_workers=cfg.data.get("num_workers", 0))  # 0 is safe on Windows
 
+    # Codec -> channel-class map from the conditions present (supervises block A when >1 codec).
+    codecs = sorted({str(c).split("_")[0] for c in train_df["condition"]})
+    channel_map = {c: i for i, c in enumerate(codecs)} if len(codecs) > 1 else None
+    log.info("codecs in training: %s", codecs)
+
     backbone = Backbone.from_pretrained(cfg.backbone.name, cfg.backbone.freeze, cfg.backbone.lora_rank)
-    model = CaesdDetector(backbone)
+    model = CaesdDetector(backbone, n_channels=max(len(codecs), 2))
     tcfg = cfg.experiment.train
     fit(model, loader, epochs=tcfg.epochs, lr=tcfg.lr, device=cfg.device,
-        loss_weights=OmegaConf.to_container(cfg.experiment.loss_weights, resolve=True))
+        loss_weights=OmegaConf.to_container(cfg.experiment.loss_weights, resolve=True),
+        channel_map=channel_map)
 
     out = Path(cfg.paths.experiments) / cfg.experiment.name / "model.pt"
     out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(),
-                "backbone": cfg.backbone.name, "lora_rank": cfg.backbone.lora_rank}, out)
+    torch.save({"state_dict": model.state_dict(), "backbone": cfg.backbone.name,
+                "lora_rank": cfg.backbone.lora_rank, "n_channels": max(len(codecs), 2),
+                "channel_map": channel_map}, out)
     log.info("saved checkpoint -> %s (%d train clips)", out, len(train_df))
 
 

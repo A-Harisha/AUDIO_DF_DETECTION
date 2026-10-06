@@ -32,25 +32,29 @@ def _fix(wave: np.ndarray, n: int) -> np.ndarray:
 def main(cfg: DictConfig) -> None:
     ckpt = torch.load(cfg.checkpoint, map_location="cpu", weights_only=False)
     backbone = Backbone.from_pretrained(ckpt["backbone"], lora_rank=ckpt["lora_rank"])
-    model = CaesdDetector(backbone)
+    model = CaesdDetector(backbone, n_channels=ckpt.get("n_channels", 8))
     model.load_state_dict(ckpt["state_dict"])
     model.eval().to(cfg.device)
 
     manifest = pd.read_parquet(cfg.scores_in)
     n = int(cfg.data.max_seconds * TARGET_SR)
     bs = cfg.data.batch_size
-    scores = np.empty(len(manifest), dtype=np.float64)
+    scores = np.empty(len(manifest), dtype=np.float64)     # raw detection score
+    llr_cond = np.empty(len(manifest), dtype=np.float64)   # block C condition-dependent LLR
     with torch.no_grad():
         for start in range(0, len(manifest), bs):
             rows = manifest.iloc[start : start + bs]
             batch = torch.stack([torch.from_numpy(_fix(read_audio(p), n)).float() for p in rows["path"]])
-            scores[start : start + len(rows)] = model(batch.to(cfg.device)).raw_score.cpu().numpy()
+            out_b = model(batch.to(cfg.device))
+            scores[start : start + len(rows)] = out_b.raw_score.cpu().numpy()
+            llr_cond[start : start + len(rows)] = model.calibrated_llr(out_b).cpu().numpy()
             if start % (bs * 20) == 0:
                 log.info("scored %d / %d", start + len(rows), len(manifest))
 
     out = manifest.copy()
     out["score"] = scores
-    keep = [c for c in ["score", "label", "condition", "codec", "language", "split"] if c in out]
+    out["llr_cond"] = llr_cond
+    keep = [c for c in ["score", "llr_cond", "label", "condition", "codec", "language", "split"] if c in out]
     Path(cfg.scores_out).parent.mkdir(parents=True, exist_ok=True)
     out[keep].to_parquet(cfg.scores_out)
     log.info("wrote %d scores -> %s", len(out), cfg.scores_out)

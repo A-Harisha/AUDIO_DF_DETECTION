@@ -11,6 +11,11 @@ from .losses import CLASS_INDEX, total_loss
 log = get_logger("caesd.train")
 
 
+def _codec_of(condition: str) -> str:
+    """'mp3_16k' -> 'mp3', 'clean' -> 'clean'."""
+    return condition.split("_")[0]
+
+
 def fit(
     model: CaesdDetector,
     loader: DataLoader,
@@ -18,11 +23,16 @@ def fit(
     lr: float = 1e-4,
     device: str = "cuda",
     loss_weights: dict | None = None,
+    channel_map: dict[str, int] | None = None,
 ) -> list[dict]:
+    """Train the detector. When ``channel_map`` (codec -> class index) is given, block A's
+    channel head is supervised with the codec label from each clip's condition -- this is what
+    gives the condition vector its meaning and lets block C calibrate per condition."""
     model.to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr)
-    log.info("trainable params: %.2fM", sum(p.numel() for p in params) / 1e6)
+    log.info("trainable params: %.2fM | channel supervision: %s", sum(p.numel() for p in params) / 1e6,
+             bool(channel_map))
 
     history: list[dict] = []
     logged_shapes = False
@@ -34,12 +44,17 @@ def fit(
             class_target = torch.tensor(
                 [CLASS_INDEX[c] for c in batch["class_name"]], device=device
             )
+            condition_targets = None
+            if channel_map is not None:
+                condition_targets = {"channel": torch.tensor(
+                    [channel_map[_codec_of(c)] for c in batch["condition"]], device=device)}
             out = model(wave)
             llr = model.calibrated_llr(out)
             if not logged_shapes:
                 log_shapes(log, wave=wave, features=out.features, condition=out.condition, llr=llr)
                 logged_shapes = True
-            loss, parts = total_loss(out, llr, class_target, binary_label, weights=loss_weights)
+            loss, parts = total_loss(out, llr, class_target, binary_label,
+                                     condition_targets=condition_targets, weights=loss_weights)
             opt.zero_grad()
             loss.backward()
             opt.step()
