@@ -174,3 +174,30 @@ here): ASVspoof 2021 LA 0.87% EER; ASVspoof 5 best fused EER 3.42% / Cllr 0.19. 
 SSL SOTA checkpoint (nii-yamagishilab/xls-r-2b-anti-deepfake) is a backbone-only release
 (Wav2Vec2ForPreTraining, 8.65 GB) needing its official downstream head; running it faithfully is
 a scoped follow-up, not hacked here.
+
+### 2026-10-07 — Scale-up (a): EER plateaus, and the calibration win does NOT reproduce
+
+Trained a 2.5x-larger condition-aware CM (22,955 train clips, 8 epochs, batch 32; same grid with
+speex8k held out) and scored the same dev grid.
+
+- **EER did not improve:** pooled 0.225 (2k) → 0.226 (5k); per-condition flat ~0.22. Discrimination
+  is plateaued at this configuration (frozen XLS-R + small LoRA, this recipe). Reaching SOTA
+  (~3-5% EER) needs much more than a lean scale-up — full train set, more adapter capacity, and
+  tuning.
+- **Block-C calibration REGRESSED** — the earlier 97% held-out improvement did NOT reproduce:
+
+  | held-out speex8k gap | small CM (2k) | scaled CM (5k) |
+  | --- | --- | --- |
+  | global calibration | 0.102 | 0.079 |
+  | block C (hypernetwork) | **0.004** | **0.152 (worse)** |
+
+  On the scaled run block C is worse than global on every condition (e.g. mp3 0.000 → 0.280,
+  clean 0.043 → 0.231). The hypernetwork overfit its calibration on the train score distribution
+  (train cllr loss fell to 0.084) and is miscalibrated on dev.
+
+**Conclusion (important, cautionary):** the Phase-2 calibration result is **training-unstable** —
+the earlier small-model win was not robust and reversed under scaling. Before any calibration
+claim is made, block C needs stabilising: a clean-anchor regulariser, a Cllr-across-conditions
+objective (not pooled), early stopping on a held-out calibration criterion, and bootstrap CIs
+with several seeds to measure variance. The actDCF/Cllr caveats compound this. **This supersedes
+the optimistic read of the first Phase-2 run.**
