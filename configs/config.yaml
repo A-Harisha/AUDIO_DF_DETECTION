@@ -1,14 +1,23 @@
 # Root config. Every run logs its full resolved config (observability rule).
 defaults:
   - backbone: xlsr
-  - condition_grid: grid
-  - data: lean
-  - experiment: phase0
+  - data: asvspoof5
+  - experiment: detector
   - _self_
 
 seed: 1337
 device: cuda
 
 paths:
-  data_root: F:/datasets/audio      # audio datasets live off the project tree
-  experiments: experiments
+  asvspoof5: F:/datasets/audio/asvspoof5     # protocols + train/dev flac tars
+  asvspoof5_eval: data/asvspoof5_eval        # eval flac tars (85 GB; gitignored)
+  manifests: experiments/data                # train / dev / eval parquet indexes
+  features: data/features                    # cached pooled layers, per backbone
+  runs: experiments/runs                     # one directory per run; never overwritten
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

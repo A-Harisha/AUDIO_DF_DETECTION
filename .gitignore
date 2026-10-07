@@ -16,8 +16,8 @@ runs/
 wandb/
 
 # Data (never commit audio or datasets)
-data/
-datasets/
+/data/
+/datasets/
 *.wav
 *.flac
 *.mp3

@@ -1,0 +1,28 @@
+# Staged lean data for Phase 0 / 1. Sources verified 2026-10-06 via web search:
+#   In-the-Wild : HF mueller91/In-The-Wild (official: deepfake-demo.aisec.fraunhofer.de/in_the_wild)
+#                 Mueller et al., Interspeech 2022. One 8.16 GB zip, English, bona-fide + spoof.
+#   IndicSynth  : HF vdivyasharma/IndicSynth (ACL 2025, author matches github.com/vdivyas).
+#                 845 GB total, 12 Indian languages, synthetic (spoof) only. We take a lean subset.
+#   AASIST      : github.com/clovaai/aasist (cloned to data_root/aasist, pretrained weights included).
+in_the_wild:
+  repo_id: mueller91/In-The-Wild
+  repo_type: dataset
+
+indicsynth:
+  repo_id: vdivyasharma/IndicSynth
+  repo_type: dataset
+  # Lean subset: held-out language (Telugu) + two seen languages. ~2-3 GB, not the full 845 GB.
+  allow_patterns:
+    - "Telugu/train-00000-*.parquet"
+    - "Telugu/train-00001-*.parquet"
+    - "Hindi/train-00000-*.parquet"
+    - "Tamil/train-00000-*.parquet"
+
+aasist:
+  repo_dir: F:/datasets/audio/aasist
+  checkpoint: F:/datasets/audio/aasist/models/weights/AASIST.pth
+
+manifest: null          # built by scripts/make_manifests.py
+max_seconds: 4.0
+batch_size: 16
+num_workers: 4          # parallel data loading so serial RawBoost does not starve the GPU

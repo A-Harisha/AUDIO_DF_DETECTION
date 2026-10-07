@@ -1,11 +1,10 @@
-"""Assemble a lean ASVspoof 5 manifest (dev for Phase-0 eval, or train for the CM).
+"""Index ASVspoof 5 (train, dev, eval) into manifests with random access into the flac tars.
 
-    uv run python scripts/prepare_asvspoof5.py +partition=train
-    uv run python scripts/prepare_asvspoof5.py +partition=dev
+    uv run python scripts/prepare_asvspoof5.py
 
-Extracts a balanced bona/spoof subset from one tar. Our codec grid / RawBoost is applied later
-to break the codec<->label confound. Phase 0 trains nothing, so only speaker-disjoint splits
-are enforced; generator-disjointness is handled at training time.
+Claim served: every claim. This fixes the protocol: train on train (attacks A01-A08), select
+models and fit calibration on dev (A09-A16, speaker-disjoint halves ``select`` / ``calib``), and
+report on eval only (A17-A32, codecs C01-C11). No clip is extracted to disk.
 """
 from __future__ import annotations
 
@@ -14,43 +13,45 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from caesd.data.manifests import assert_no_leakage, assign_split_by, build_manifest
-from caesd.data.sources import parse_asvspoof5
+from caesd.data.manifests import assert_no_leakage, assign_split_by
+from caesd.data.sources import index_asvspoof5
 from caesd.utils.logging import get_logger
 
 log = get_logger("caesd.prepare.a5")
 
+# partition: (protocol, tar glob, split fractions for assign_split_by, or the single split name)
 _PARTITION = {
-    # partition: (protocol, flac tar, split fractions (train,dev,test), output name, default cap)
-    "dev": ("ASVspoof5.dev.track_1.tsv", "flac_D_aa.tar", (0.0, 0.5, 0.5), "clean_manifest.parquet", 400),
-    "train": ("ASVspoof5.train.tsv", "flac_T_aa.tar", (0.9, 0.1, 0.0), "train_manifest.parquet", 2500),
+    "train": ("ASVspoof5.train.tsv", "flac_T_*.tar", "train"),
+    "dev": ("ASVspoof5.dev.track_1.tsv", "flac_D_*.tar", None),
+    "eval": ("ASVspoof5.eval.track_1.tsv", "flac_E_*.tar", "test"),
 }
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    partition = cfg.get("partition", "dev")
-    protocol, tar, fractions, out_name, default_cap = _PARTITION[partition]
-    a5 = Path(cfg.paths.data_root) / "asvspoof5"
-
-    records = parse_asvspoof5(
-        protocols_tar=a5 / "ASVspoof5_protocols.tar",
-        flac_tar=a5 / tar,
-        out_dir=a5 / f"{partition}_subset",
-        protocol=protocol,
-        max_per_class=cfg.get("max_per_class", default_cap),
-    )
-    log.info("%s: extracted %d clips", partition, len(records))
-
-    df = build_manifest(records)
-    df = assign_split_by(df, key="speaker", fractions=fractions, seed=cfg.seed)
-    assert_no_leakage(df, keys=("speaker",))
-
-    out = Path(cfg.paths.experiments) / "phase0" / out_name
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out)
-    log.info("%s manifest %d rows -> %s | splits %s | classes %s", partition, len(df), out,
-             df["split"].value_counts().to_dict(), df["class_name"].value_counts().to_dict())
+    out_dir = Path(cfg.paths.manifests)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for partition in cfg.get("partitions", list(_PARTITION)):
+        protocol, pattern, split = _PARTITION[partition]
+        tar_dir = Path(cfg.paths.asvspoof5_eval if partition == "eval" else cfg.paths.asvspoof5)
+        tars = sorted(tar_dir.glob(pattern))
+        df = index_asvspoof5(Path(cfg.paths.asvspoof5) / "ASVspoof5_protocols.tar", tars, protocol)
+        coverage = len(df) / int(df["n_protocol"].iloc[0])
+        log.info("%s: %d tars, %d clips, %.1f%% of the protocol", partition, len(tars), len(df), 100 * coverage)
+        if coverage < cfg.get("min_coverage", 1.0):
+            raise RuntimeError(f"{partition}: only {coverage:.1%} of the protocol is on disk "
+                               f"(pass +min_coverage=<fraction> to index a partial download)")
+        if split is None:  # dev: model selection and calibration never share a speaker
+            df = assign_split_by(df, key="speaker", fractions=(0.5, 0.5, 0.0), seed=cfg.seed)
+            df["split"] = df["split"].map({"train": "select", "dev": "calib"})
+            assert_no_leakage(df, keys=("speaker",))
+        else:
+            df["split"] = split
+        df = df.drop(columns="n_protocol")
+        df.to_parquet(out_dir / f"{partition}.parquet")
+        log.info("%s -> %s | splits %s | label %s | codecs %s", partition, out_dir / f"{partition}.parquet",
+                 df["split"].value_counts().to_dict(), df["label"].value_counts().to_dict(),
+                 df["codec"].value_counts().to_dict())
 
 
 if __name__ == "__main__":

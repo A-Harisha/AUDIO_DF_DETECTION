@@ -1,0 +1,24 @@
+# One detector run. The ablation ladder changes one line at a time:
+#   frozen head        : features=true
+#   + LoRA             : features=false lora_rank=16
+#   + FiLM / block A   : film=true
+#   full fine-tune     : features=false unfreeze=true
+name: ???                 # run name; experiments/runs/<name> must not exist
+features: true            # true: train the head on cached features of the frozen backbone
+views: [clean, codec]     # features=true: cached train views (and the dev views to validate on)
+film: false               # block A (codec-supervised condition vector) + FiLM
+lora_rank: 0              # features=false only
+unfreeze: false           # features=false only: fine-tune the whole backbone
+rawboost: false           # features=false only: RawBoost on the training crops
+codec_p: 0.5              # features=false only: probability of a simulated codec per training crop
+crop_seconds: 4.0         # features=false only: random training crop
+val_n: 6000               # features=false only: validation clips drawn from the dev select split
+epochs: 30
+patience: 5
+batch_size: 512
+lr: 1.0e-3                # head
+backbone_lr: 1.0e-5       # LoRA / unfrozen backbone
+weight_decay: 1.0e-2
+dropout: 0.2
+cond_weight: 0.5
+score_sets: [dev_clean, dev_codec, eval_clean]   # scored with the best checkpoint

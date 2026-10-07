@@ -1,0 +1,5 @@
+# ASVspoof 5 track 1. Train: attacks A01-A08. Dev: A09-A16 (model selection + calibration).
+# Eval: A17-A32 with codecs C01-C11 (reporting only).
+max_seconds: 16.0       # clips are scored at full length up to this cap
+num_workers: 20
+extract_batch_size: 24

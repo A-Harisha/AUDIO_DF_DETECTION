@@ -201,3 +201,35 @@ claim is made, block C needs stabilising: a clean-anchor regulariser, a Cllr-acr
 objective (not pooled), early stopping on a held-out calibration criterion, and bootstrap CIs
 with several seeds to measure variance. The actDCF/Cllr caveats compound this. **This supersedes
 the optimistic read of the first Phase-2 run.**
+
+### 2026-10-07 — Root-cause diagnosis of the 22% EER plateau (supersedes parts of the above)
+
+Diagnostics on the `phase2_condaware_big` checkpoint and on frozen XLS-R-300M features. Dev numbers
+are on the 800-clip balanced ASVspoof 5 dev subset (4 s crop), so each per-attack cell has 42-63
+spoof clips: treat them as indicative, not final. Single seed.
+
+1. **The model memorises its training attacks.** EER on seen train clips 0.000; on held-out
+   speakers with seen attacks A01-A08 (train-partition dev split, all 5 codecs) 0.000-0.005; on
+   ASVspoof 5 dev (unseen attacks A09-A16) 0.217.
+2. **Two attacks cause the plateau.** Per-attack dev EER (clean): A09 0.046, A10 0.081, A11 0.018,
+   **A12 0.777, A13 0.509**, A14 0.000, A15 0.091, A16 0.128. Without A12/A13 the EER is 0.065.
+3. **Our training makes the backbone worse.** A logistic-regression probe on mean-pooled *frozen*
+   XLS-R features (no LoRA, trained on the same 4,591 clean clips) gives dev EER 0.010 (layer 20),
+   0.010-0.018 for layers 10-22, 0.022 for the last layer; A12 <= 0.02 and A13 <= 0.04 for layers
+   19-22. Which component of our recipe causes the loss (LoRA, FiLM, joint Cllr loss, codec
+   supervision, epochs) is NOT yet isolated.
+4. **The "codec<->label confound" was a misreading.** In `ASVspoof5.train.tsv` and
+   `ASVspoof5.dev.track_1.tsv` the three codec columns are `-` for every row. Column 7 (AC1/AC2/AC3)
+   is a separate tag on spoof rows, not a codec. Train and dev have no codec confound.
+5. **speex8k is not a held-out condition.** Block A's channel head labels 679/800 speex clips as
+   AMR (both 8 kHz narrowband). It also labels 723/800 Opus clips as clean.
+6. **The Phase-0 GO does not hold for a strong detector.** With the layer-20 probe (clean-trained;
+   EER 0.010 clean, 0.022 speex8k) and global calibration fit on clean dev, the p=0.5 calibration
+   gap is 0.005-0.018 on every codec except AAC (0.115); held-out speex8k gap 0.018 (Phase 0
+   measured 0.346 with the weak CM). Cllr - minCllr: clean 0.023, speex8k 0.027, AAC 0.196. At
+   p=0.05 the gaps are larger (up to 0.43) but n=413 per cell is too small to trust them.
+7. **Scale.** We train on 4,591 unique clips = 2.5% of the 182,357-clip train partition (the
+   "22,955" figure is the same clips x 5 codecs).
+
+Consequence: replace the trained CM with a frozen-feature baseline first, re-run Phase 0 on a
+large dev sample at p=0.05, and decide go/no-go on the calibration premise from that.

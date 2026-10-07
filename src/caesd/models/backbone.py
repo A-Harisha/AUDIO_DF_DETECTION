@@ -1,7 +1,12 @@
-"""Self-supervised speech backbone: XLS-R or WavLM, frozen, adapted with LoRA.
+"""Self-supervised speech backbone: XLS-R or WavLM. Frozen by default; LoRA is optional.
 
-Input : waveform  [B, T]  (mono, 16 kHz, float32)
-Output: features  [B, L, D]  (L frames, D = feature_dim)
+Input : waveform  [B, T]  (mono, 16 kHz, float32, zero-padded) and lengths [B] (samples)
+Output: pooled    [B, L, D]  (time-mean of every hidden layer; L = n_layers, D = feature_dim)
+
+Every layer is returned because the layers differ strongly: on ASVspoof 5 dev a linear probe gets
+2.2% EER on the last layer and 1.0% on layer 20 (docs/experiment_log.md, 2026-10-07). The head
+learns the layer weights. The time-mean commutes with that weighted sum, so pooled layers can be
+cached once for a frozen backbone.
 """
 from __future__ import annotations
 
@@ -20,14 +25,16 @@ class Backbone(nn.Module):
         super().__init__()
         self.model = model
         self.feature_dim = feature_dim
+        self.n_layers = model.config.num_hidden_layers + 1  # + the CNN output
 
     @classmethod
     def from_pretrained(
-        cls, name: str = DEFAULT_XLSR, freeze: bool = True, lora_rank: int = 16
+        cls, name: str = DEFAULT_XLSR, freeze: bool = True, lora_rank: int = 0
     ) -> Backbone:
         from transformers import AutoModel
 
-        model = AutoModel.from_pretrained(name)
+        # layerdrop would randomly skip layers in train mode and corrupt the per-layer outputs.
+        model = AutoModel.from_pretrained(name, layerdrop=0.0)
         feature_dim = model.config.hidden_size
         if freeze:
             for param in model.parameters():
@@ -55,8 +62,20 @@ class Backbone(nn.Module):
             num_feat_extract_layers=2,
             do_stable_layer_norm=True,
             feat_extract_norm="layer",
+            layerdrop=0.0,
         )
         return cls(Wav2Vec2Model(cfg), feature_dim)
 
-    def forward(self, wave: torch.Tensor) -> torch.Tensor:
-        return self.model(wave).last_hidden_state
+    def forward(self, wave: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+        mask = torch.arange(wave.shape[1], device=wave.device)[None] < lengths[:, None]
+        # Per-utterance zero-mean, unit-variance input over the valid samples (the SSL front ends
+        # were pretrained with this normalisation).
+        n = lengths[:, None].to(wave.dtype)
+        mean = (wave * mask).sum(1, keepdim=True) / n
+        var = (((wave - mean) * mask) ** 2).sum(1, keepdim=True) / n
+        wave = (wave - mean) * mask / torch.sqrt(var + 1e-7)
+        hidden = self.model(wave, attention_mask=mask, output_hidden_states=True).hidden_states
+        frames = self.model._get_feat_extract_output_lengths(lengths)
+        frame_mask = torch.arange(hidden[0].shape[1], device=wave.device)[None] < frames[:, None]
+        frame_mask = frame_mask[:, :, None].to(hidden[0].dtype)
+        return torch.stack([(h * frame_mask).sum(1) / frames[:, None] for h in hidden], dim=1)

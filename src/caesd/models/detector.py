@@ -1,66 +1,57 @@
-"""Full CAESD model. One model, no ensemble. The condition vector is the only shared signal
-and it does two jobs: it tells FiLM where the evidence is weak, and it tells the hypernetwork
-how much the evidence is worth.
+"""The detector: an SSL backbone and a small head. One model, no ensemble.
 
-Three output classes -- bona fide, processed bona fide, synthetic -- stop the system flagging
-denoised or restored real speech as fake.
+``Head`` maps the pooled layer stack to one score. It is all that trains when the backbone is
+frozen, so it can train on cached features (``CaesdDetector(None, head)``).
 
-waveform [B, T] -> DetectorOutput
+Optional ablation (``n_channels > 0``): block A predicts the codec from the pooled features and
+FiLM modulates the features with the condition vector. Calibration (block C) is NOT part of the
+detector: it is a post-hoc stage fit on held-out scores (``block_c_hypernet``), so it cannot
+change discrimination.
+
+pooled layers [B, L, D]  ->  {score [B] (higher => bona fide), channel_logits [B, n_channels] | None}
+
+With ``n_out > 1`` the same head is a plain classifier (``score`` is [B, n_out]); the calibration
+study uses it as the stand-alone codec classifier.
 """
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import torch
 from torch import nn
 
 from .backbone import Backbone
 from .block_a_condition import ConditionEncoder
-from .block_c_hypernet import CalibrationHypernet
 from .film import FiLM
 
-CLASS_NAMES = ("bona_fide", "processed_bona_fide", "synthetic")
-GENUINE_IDX = (0, 1)
-SYNTHETIC_IDX = 2
 
+class Head(nn.Module):
+    def __init__(self, n_layers: int, feature_dim: int, hidden: int = 256, dropout: float = 0.2,
+                 n_channels: int = 0, condition_dim: int = 32, n_out: int = 1) -> None:
+        super().__init__()
+        self.norm = nn.LayerNorm(feature_dim, elementwise_affine=False)  # layers differ in scale
+        self.layer_logits = nn.Parameter(torch.zeros(n_layers))
+        self.condition_encoder = ConditionEncoder(feature_dim, condition_dim, n_channels) if n_channels else None
+        self.film = FiLM(feature_dim, condition_dim) if n_channels else None
+        self.mlp = nn.Sequential(nn.Dropout(dropout), nn.Linear(feature_dim, hidden), nn.GELU(),
+                                 nn.Dropout(dropout), nn.Linear(hidden, n_out))
 
-@dataclass
-class DetectorOutput:
-    features: torch.Tensor          # [B, L, D]
-    pooled: torch.Tensor            # [B, D]
-    condition: torch.Tensor         # [B, C]
-    condition_aux: dict             # channel_logits, language_logits, snr, bandwidth
-    class_logits: torch.Tensor      # [B, 3]
-    raw_score: torch.Tensor         # [B]  higher => bona fide
+    def forward(self, layers: torch.Tensor) -> dict[str, torch.Tensor | None]:
+        weights = torch.softmax(self.layer_logits, dim=0)
+        x = (weights[None, :, None] * self.norm(layers.float())).sum(dim=1)
+        channel_logits = None
+        if self.condition_encoder is not None:
+            cond = self.condition_encoder(x)
+            channel_logits = cond["channel_logits"]
+            x = self.film(x, cond["condition"])
+        out = self.mlp(x)
+        return {"score": out.squeeze(-1) if out.shape[-1] == 1 else out, "channel_logits": channel_logits}
 
 
 class CaesdDetector(nn.Module):
-    def __init__(
-        self,
-        backbone: Backbone,
-        condition_dim: int = 32,
-        n_channels: int = 8,
-        n_languages: int = 12,
-    ) -> None:
+    def __init__(self, backbone: Backbone | None, head: Head) -> None:
         super().__init__()
-        d = backbone.feature_dim
         self.backbone = backbone
-        self.condition_encoder = ConditionEncoder(d, condition_dim, n_channels, n_languages)
-        self.film = FiLM(d, condition_dim)
-        self.classifier = nn.Linear(d, len(CLASS_NAMES))
-        self.hypernet = CalibrationHypernet(condition_dim)
+        self.head = head
 
-    def forward(self, wave: torch.Tensor) -> DetectorOutput:
-        features = self.backbone(wave)
-        pooled = features.mean(dim=1)
-        cond = self.condition_encoder(pooled)
-        condition = cond.pop("condition")
-        modulated = self.film(pooled, condition)
-        logits = self.classifier(modulated)
-        genuine = torch.logsumexp(logits[:, GENUINE_IDX], dim=-1)
-        raw_score = genuine - logits[:, SYNTHETIC_IDX]
-        return DetectorOutput(features, pooled, condition, cond, logits, raw_score)
-
-    def calibrated_llr(self, out: DetectorOutput) -> torch.Tensor:
-        """Condition-dependent LLR from block C."""
-        return self.hypernet.calibrate(out.raw_score, out.condition)
+    def forward(self, x: torch.Tensor, lengths: torch.Tensor | None = None) -> dict:
+        """``x`` is a waveform batch [B, T], or cached pooled layers [B, L, D] with no backbone."""
+        return self.head(x if self.backbone is None else self.backbone(x, lengths))
