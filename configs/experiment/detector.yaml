@@ -14,7 +14,7 @@ codec_p: 0.5              # features=false only: probability of a simulated code
 crop_seconds: 4.0         # features=false only: random training crop
 val_n: 6000               # features=false only: validation clips drawn from the dev select split
 epochs: 30
-patience: 5
+patience: 30             # >= epochs: the one-cycle schedule must finish; the best epoch is still the one kept
 batch_size: 512
 lr: 1.0e-3                # head
 backbone_lr: 1.0e-5       # LoRA / unfrozen backbone
