@@ -10,6 +10,7 @@ stream loss lines live. GPU state and checkpoint arrival update regardless of bu
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import time
 from datetime import datetime
@@ -29,6 +30,18 @@ def gpu_line() -> str:
         return "GPU n/a"
 
 
+def progress_line(path: Path) -> str | None:
+    """Read the training heartbeat JSON (flushed each log step), if present."""
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    age = time.time() - d.get("ts", 0)
+    return (f"epoch {d['epoch']+1}/{d['epochs']}  step {d['step']}/{d['steps_per_epoch']}  "
+            f"loss {d['loss']:.3f} (cls {d['cls']:.3f} cllr {d['cllr']:.3f} cond {d['cond']:.3f})  "
+            f"[{age:.0f}s ago]")
+
+
 def tail(path: Path, n: int) -> str:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -40,12 +53,15 @@ def tail(path: Path, n: int) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True, help="path that appears when training finishes")
+    ap.add_argument("--progress", default=None, help="heartbeat JSON written by training (epoch/loss)")
     ap.add_argument("--log", default=None, help="optional log file to tail")
     ap.add_argument("--interval", type=int, default=15)
     ap.add_argument("--tail-lines", type=int, default=6)
     args = ap.parse_args()
 
     ckpt = Path(args.checkpoint)
+    # Default the heartbeat to progress.json next to the checkpoint.
+    progress = Path(args.progress) if args.progress else ckpt.with_name("progress.json")
     log_path = Path(args.log) if args.log else None
     start = time.time()
     while True:
@@ -54,6 +70,9 @@ def main() -> None:
         done = ckpt.exists()
         size = f"{ckpt.stat().st_size/1e6:.0f} MB" if done else "pending"
         print(f"\n[{stamp}] elapsed {elapsed//60}m{elapsed%60:02d}s | {gpu_line()} | checkpoint: {size}")
+        prog = progress_line(progress)
+        if prog:
+            print("  " + prog)
         if log_path:
             print(tail(log_path, args.tail_lines))
         if done:

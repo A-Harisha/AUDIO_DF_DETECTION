@@ -33,8 +33,15 @@ def main(cfg: DictConfig) -> None:
     train_df = manifest[manifest["split"] == "train"]
     augment = RawBoost() if cfg.experiment.get("train", {}).get("augment") == "rawboost" else None
     dataset = AudioDataset(train_df, max_seconds=cfg.data.max_seconds, augment=augment, train=True)
-    loader = DataLoader(dataset, batch_size=cfg.data.batch_size, shuffle=True,
-                        num_workers=cfg.data.get("num_workers", 0))  # 0 is safe on Windows
+    nw = cfg.data.get("num_workers", 4)  # parallel loading so RawBoost doesn't starve the GPU
+
+    def _seed_worker(wid: int) -> None:
+        import numpy as np
+        np.random.seed((torch.initial_seed() + wid) % 2**32)  # distinct augmentation per worker
+
+    loader = DataLoader(dataset, batch_size=cfg.data.batch_size, shuffle=True, num_workers=nw,
+                        pin_memory=True, persistent_workers=nw > 0,
+                        worker_init_fn=_seed_worker if nw > 0 else None)
 
     # Codec -> channel-class map from the conditions present (supervises block A when >1 codec).
     codecs = sorted({str(c).split("_")[0] for c in train_df["condition"]})
@@ -44,9 +51,10 @@ def main(cfg: DictConfig) -> None:
     backbone = Backbone.from_pretrained(cfg.backbone.name, cfg.backbone.freeze, cfg.backbone.lora_rank)
     model = CaesdDetector(backbone, n_channels=max(len(codecs), 2))
     tcfg = cfg.experiment.train
+    progress_path = Path(cfg.paths.experiments) / cfg.experiment.name / "progress.json"
     fit(model, loader, epochs=tcfg.epochs, lr=tcfg.lr, device=cfg.device,
         loss_weights=OmegaConf.to_container(cfg.experiment.loss_weights, resolve=True),
-        channel_map=channel_map)
+        channel_map=channel_map, progress_path=progress_path)
 
     out = Path(cfg.paths.experiments) / cfg.experiment.name / "model.pt"
     out.parent.mkdir(parents=True, exist_ok=True)
