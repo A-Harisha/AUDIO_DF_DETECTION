@@ -149,3 +149,28 @@ Honest caveats:
 
 **Still to do in Phase 2:** full ablation ladder (temperature scaling, +FiLM-only, +SAE, +gate),
 bootstrap CIs, and the five generalization mechanisms measured on the held-out eval corpora.
+
+### 2026-10-07 — Published baselines under our protocol (same dev grid)
+
+Two published detectors run faithfully (plug-and-play, no head-guessing) on the exact ASVspoof 5
+dev grid, EER by condition (test split):
+
+| condition | AASIST (2019 LA) | HF wav2vec2 deepfake | our CM (in-domain) |
+| --- | --- | --- | --- |
+| clean | 0.329 | 0.438 | 0.259 |
+| mp3_16k | 0.366 | 0.443 | 0.223 |
+| opus_16k | 0.351 | 0.453 | 0.237 |
+| amr_16k | 0.417 | 0.397 | 0.220 |
+| aac_16k | 0.397 | 0.484 | 0.220 |
+| speex8k_16k (held out) | 0.402 | 0.383 | 0.220 |
+| **POOLED** | **0.383** | **0.425** | **0.225** |
+
+Both published baselines were trained out-of-domain (AASIST on ASVspoof 2019 LA; the HF wav2vec2
+model on other deepfake data) and collapse on ASVspoof 5 — the P1 generalization problem. Our
+in-domain CM beats both but is still far from reported ASVspoof 5 SOTA (EER ~3.4%, Cllr ~0.19).
+
+Literature SOTA (proposal §9, unverified 2026 preprints, different protocols — NOT reproduced
+here): ASVspoof 2021 LA 0.87% EER; ASVspoof 5 best fused EER 3.42% / Cllr 0.19. The authoritative
+SSL SOTA checkpoint (nii-yamagishilab/xls-r-2b-anti-deepfake) is a backbone-only release
+(Wav2Vec2ForPreTraining, 8.65 GB) needing its official downstream head; running it faithfully is
+a scoped follow-up, not hacked here.
