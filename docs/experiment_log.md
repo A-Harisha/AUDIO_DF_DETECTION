@@ -132,9 +132,16 @@ baseline there — and block C beats it by interpolating in condition space. Thi
 paper's core contrast (condition-dependent vs global calibration).
 
 Honest caveats:
-- Trade-off: block C is slightly worse than global on clean/mild codecs (clean 0.005 → 0.075).
-  It redistributes calibration toward the conditions where shift actually hurts; a clean-anchor
-  regulariser could recover this and is a follow-up.
+- **Cllr regression (important):** by Cllr — overall LLR quality, the forensic metric — block C
+  is WORSE than global everywhere (pooled Cllr 0.941 vs 0.670; e.g. clean 1.087 vs 0.645). It
+  shrinks the actDCF gap at the p=0.5 operating point on shifted codecs but degrades the LLRs in
+  general. So the method is promising on the specific operating-point claim but is NOT yet a
+  strict improvement. Fixing the Cllr regression (clean-anchor regulariser, more data/epochs,
+  possibly training the hypernetwork to minimise Cllr across conditions rather than pooled) is
+  the top Phase-2 follow-up.
+- Trade-off: block C is worse than global on clean/mild codecs at the operating point too
+  (clean gap 0.005 → 0.075). It redistributes calibration toward the conditions where shift hurts.
+- Discrimination is modest: EER ≈ 0.22, minDCF ≈ 0.31–0.35 at p=0.5.
 - Discrimination is still modest (minDCF ≈ 0.31–0.35 at p=0.5); the calibration claim is
   orthogonal to and holds despite that. A stronger detector (more data/epochs, all train shards)
   is the Phase-2 scaling step.
