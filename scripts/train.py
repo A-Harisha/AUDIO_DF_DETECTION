@@ -24,6 +24,12 @@ from caesd.utils.seed import set_seed
 log = get_logger("caesd.train.cli")
 
 
+def _seed_worker(wid: int) -> None:
+    """Distinct augmentation RNG per DataLoader worker. Module-level so spawn can pickle it."""
+    import numpy as np
+    np.random.seed((torch.initial_seed() + wid) % 2**32)
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     log_hparams(log, OmegaConf.to_container(cfg, resolve=True))
@@ -34,11 +40,6 @@ def main(cfg: DictConfig) -> None:
     augment = RawBoost() if cfg.experiment.get("train", {}).get("augment") == "rawboost" else None
     dataset = AudioDataset(train_df, max_seconds=cfg.data.max_seconds, augment=augment, train=True)
     nw = cfg.data.get("num_workers", 4)  # parallel loading so RawBoost doesn't starve the GPU
-
-    def _seed_worker(wid: int) -> None:
-        import numpy as np
-        np.random.seed((torch.initial_seed() + wid) % 2**32)  # distinct augmentation per worker
-
     loader = DataLoader(dataset, batch_size=cfg.data.batch_size, shuffle=True, num_workers=nw,
                         pin_memory=True, persistent_workers=nw > 0,
                         worker_init_fn=_seed_worker if nw > 0 else None)
