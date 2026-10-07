@@ -45,6 +45,7 @@ torchaudio = { index = "pytorch-cu124" }
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+extend-exclude = ["obsolete"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

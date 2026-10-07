@@ -5,7 +5,7 @@
 #   full fine-tune     : features=false unfreeze=true
 name: ???                 # run name; experiments/runs/<name> must not exist
 features: true            # true: train the head on cached features of the frozen backbone
-views: [clean, codec]     # features=true: cached train views (and the dev views to validate on)
+views: [clean, codec]     # features=true: cached train views
 film: false               # block A (codec-supervised condition vector) + FiLM
 lora_rank: 0              # features=false only
 unfreeze: false           # features=false only: fine-tune the whole backbone

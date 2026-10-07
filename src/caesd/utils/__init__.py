@@ -1,1 +1,1 @@
-"""Shared utilities: seeding, logging, I/O, registry."""
+"""Shared utilities: seeding, logging, I/O."""
