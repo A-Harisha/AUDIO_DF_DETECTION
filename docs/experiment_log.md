@@ -253,7 +253,7 @@ pooled-global and lookup calibration.
 | frozen WavLM head | 0.0159 | 0.0315 | 0.011 / 0.039 |
 | frozen XLS-R, clean training only | 0.0030 | 0.0246 | 0.001 / 0.005 |
 | frozen XLS-R + block A / FiLM | 0.0074 | 0.0323 | 0.013 / 0.010 |
-| fusion XLS-R + WavLM (weights fit on `calib`) | 0.005 | 0.0136 (mean over codecs) | – |
+| fusion XLS-R + WavLM (weights fit on `calib`; v1 / v2 heads) | 0.0054 / 0.0060 | 0.0203 / 0.0199 (mean over the 8 codecs) | – |
 
 - The root cause is confirmed: a frozen backbone with a small head removes the A12/A13 failure.
 - FiLM / block A adds nothing. Codec augmentation in training did not help here (clean-only
