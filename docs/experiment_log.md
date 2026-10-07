@@ -233,3 +233,62 @@ spoof clips: treat them as indicative, not final. Single seed.
 
 Consequence: replace the trained CM with a frozen-feature baseline first, re-run Phase 0 on a
 large dev sample at p=0.05, and decide go/no-go on the calibration premise from that.
+
+### 2026-10-07 — Rebuilt pipeline, interim results on partial data (branch `sota-baseline`)
+
+Setup. Frozen backbone (XLS-R-300M, WavLM-Large; all 25 hidden layers time-pooled, cached in fp16),
+learned layer weights, MLP head (0.26M params). Train: ASVspoof 5 train tars aa+ab (73,000 of 182,357
+clips, attacks A01-A08), clean view + one simulated codec per clip. Validation and calibration: dev
+tar aa (47,400 of 140,950 clips, A09-A16), split by speaker into `select` (23,347) and `calib`
+(24,053). Clips up to 16 s. Single seed (1337). The eval set is not used yet.
+Claim served: a frozen SSL backbone generalises to unseen attacks; block C is judged against
+pooled-global and lookup calibration.
+
+**Detection (dev `select`, unseen attacks A09-A16; EER).**
+
+| run | clean | simulated codec | A12 / A13 (clean) |
+| --- | --- | --- | --- |
+| old trained CM (2026-10-06, 800-clip dev subset, not comparable in size) | 0.217 | – | 0.777 / 0.509 |
+| frozen XLS-R head | 0.0082 | 0.0269 | 0.003 / 0.017 |
+| frozen WavLM head | 0.0159 | 0.0315 | 0.011 / 0.039 |
+| frozen XLS-R, clean training only | 0.0030 | 0.0246 | 0.001 / 0.005 |
+| frozen XLS-R + block A / FiLM | 0.0074 | 0.0323 | 0.013 / 0.010 |
+| fusion XLS-R + WavLM (weights fit on `calib`) | 0.005 | 0.0136 (mean over codecs) | – |
+
+- The root cause is confirmed: a frozen backbone with a small head removes the A12/A13 failure.
+- FiLM / block A adds nothing. Codec augmentation in training did not help here (clean-only
+  training is no worse on the codec view). Both are single-seed, single-run differences of
+  <1 point on ~23k clips: not established.
+- The head overfits: train BCE 0.0003 at epoch 29, best dev epoch 3, dev EER then fluctuates
+  0.9-2.1%. A rerun with the full 30-epoch one-cycle schedule (v2) gave identical best-epoch
+  numbers for XLS-R, so the schedule was not the problem. (I had suspected it; that was wrong.)
+  Regularisation or more data is the lever, not the schedule.
+- Not comparable with published results: this is dev, not eval, and 34% of dev.
+
+**Calibration (fused scores, Cllr; lower is better; clip-weighted mean over conditions).**
+
+| | global_clean | global_pooled | lookup_oracle | lookup_pred | block C |
+| --- | --- | --- | --- | --- | --- |
+| dev, seen codecs | 0.074 | 0.063 | 0.053 | 0.066 | **0.041** |
+| dev, leave-one-codec-out | 0.124 | 0.091 | 0.091 | 0.095 | **0.209** (v2: 0.517) |
+
+- Block C wins on seen codecs and loses badly on unseen ones (speex_wb Cllr 0.69 vs 0.11 for
+  pooled), which is exactly the case the method claims. Its leave-one-out result varies from
+  0.209 to 0.517 between two runs of the same study (different codec-classifier training).
+- **Block C is not a pure calibrator.** Its LLR changes the EER versus the raw score (clean
+  0.5% -> 0.3%, mean -0.4 points on seen codecs, +0.5 on unseen). A monotone score map cannot do
+  that. The codec posterior it reads comes from a classifier trained on the same features, so it
+  carries class information (the codec classifier is also weak on clean: 43% accuracy, 37% on
+  m4a). The seen-codec "win" is therefore not evidence of better calibration.
+- Pooled-global calibration is within 0.01-0.02 Cllr of the PAV floor (minCllr) on most codecs.
+  The remaining gap is at the strict prior: actDCF(p=0.05), speex_nb 0.270 (pooled) vs 0.192
+  (oracle lookup) vs minDCF 0.176; this is closed by per-condition calibration with the TRUE
+  codec, and only partly (0.192 vs 0.176).
+
+**Decision on the calibration premise: weakly supported, not established.** Pooled calibration
+removes most of the loss; per-condition calibration helps at p=0.05 on seen codecs when the codec
+is known. Block C as built does not beat pooled calibration on unseen codecs. Do not claim it.
+
+Open, in order: (1) eval-set scoring (download: 3 of 10 tars; eval extraction ~7 h GPU);
+(2) a leak-free condition input for block C, or drop it; (3) more train data and regularisation
+for the head; (4) LoRA / full fine-tune on full data; (5) multiple seeds and CIs on EER.
