@@ -6,7 +6,8 @@
 Claim served: the frozen SSL backbone already separates unseen attacks (linear probe ~1% dev
 EER), so the detector baseline must start from frozen features. Views: ``clean`` (the clip as
 released), ``codec`` (one simulated ASVspoof 5 codec per clip), ``rb_codec`` (RawBoost, then the
-codec). Clips are read at full length up to ``data.max_seconds``.
+codec), ``encodec`` (EnCodec, or MP3 then EnCodec: the neural codecs of eval C04 / C07). Clips are
+read at full length up to ``data.max_seconds``.
 
 Several backbones (``+backbones``, names of configs/backbone/*.yaml) share one pass over the
 audio, so they see the identical decoded and coded waveform.
@@ -36,7 +37,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from caesd.data.augment import CodecAugment, RawBoost
-from caesd.data.condition_grid import DESCRIPTOR_DIM
+from caesd.data.condition_grid import DESCRIPTOR_DIM, NEURAL_CODECS
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, collate
 from caesd.models import Backbone
 from caesd.utils.logging import get_logger, log_hparams
@@ -98,7 +99,8 @@ def main(cfg: DictConfig) -> None:
     dataset = AudioDataset(
         manifest, cfg.data.max_seconds,
         rawboost=RawBoost() if view == "rb_codec" else None,
-        codec=CodecAugment() if view in ("codec", "rb_codec") else None,
+        codec=(CodecAugment() if view in ("codec", "rb_codec")
+               else CodecAugment(codecs=NEURAL_CODECS) if view == "encodec" else None),
         descriptor=write_desc,
     )
     # Read in tar order (sequential disk access); inside each window of 100 batches, sort by size

@@ -230,6 +230,8 @@ def main(cfg: DictConfig) -> None:
     log.info("== dev select, leave-one-codec-out (unseen simulated condition)")
     loco = []
     for i, codec in enumerate(CODEC_NAMES[1:], start=1):
+        if not (truth == i).any():  # a codec with no dev rows in this study's views (e.g. EnCodec)
+            continue
         fit_rows = is_calib & (truth != i)
         test_rows = ~is_calib & (truth == i)
         # Only lookup_pred needs a classifier that has not seen this codec. Block C reads the

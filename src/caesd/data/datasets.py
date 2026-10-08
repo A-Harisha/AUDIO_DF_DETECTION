@@ -7,9 +7,9 @@ import torch
 from torch.utils.data import Dataset
 
 from ..utils.io import TARGET_SR, read_audio
-from .condition_grid import CODECS, channel_descriptor
+from .condition_grid import CODECS, NEURAL_CODECS, channel_descriptor
 
-CODEC_NAMES = ("clean", *CODECS)  # channel-class index used everywhere
+CODEC_NAMES = ("clean", *CODECS, *NEURAL_CODECS)  # channel-class index used everywhere; append only
 
 
 class AudioDataset(Dataset):

@@ -48,6 +48,7 @@ def test_index_reads_clips_straight_from_the_tar(tmp_path):
 
 def test_codec_tables_are_consistent():
     assert CODEC_NAMES[0] == "clean" and set(EVAL_CODEC.values()) == set(CODECS)
+    assert CODEC_NAMES[1 : 1 + len(CODECS)] == tuple(CODECS)  # cached sim_codec indices stay valid
     assert all(len(spec[3]) == 5 for spec in CODECS.values())  # CODEC_Q 1..5
 
 

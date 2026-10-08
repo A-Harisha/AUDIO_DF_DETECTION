@@ -83,9 +83,9 @@ def main(cfg: DictConfig) -> None:
         train_meta = pd.concat([p[1] for p in parts], ignore_index=True)
         train_loader = feature_loader(x, train_meta, exp.batch_size, shuffle=True)
         val = {}
-        for name in ("dev_clean", "dev_codec"):  # the same validation sets for every run
-            vx, vmeta = feature_set(cfg, name, split="select")
-            val[name] = (feature_loader(vx, vmeta, 4096), vmeta)
+        for v in exp.val_views:  # independent of the train views, so runs stay comparable
+            vx, vmeta = feature_set(cfg, f"dev_{v}", split="select")
+            val[f"dev_{v}"] = (feature_loader(vx, vmeta, 4096), vmeta)
         model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout, n_channels=n_channels))
     else:
         train_meta = pd.read_parquet(Path(cfg.paths.manifests) / "train.parquet")

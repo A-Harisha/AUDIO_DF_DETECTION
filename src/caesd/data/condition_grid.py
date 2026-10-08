@@ -21,7 +21,7 @@ from ..utils.io import TARGET_SR, read_audio, write_audio
 # Simulated codecs, named and configured as in ASVspoof5.codec.config.csv (eval codecs C01-C10).
 #   name: (encoder, container, sample rate Hz, bitrate kbps for CODEC_Q 1..5)
 # mp3_wb is VBR in the csv (ranges 45-85 ... 220-260 kbps); we use the range midpoints.
-# Not simulated, so truly unseen at eval: C04 encodec_wb, C07 mp3_encodec_wb, C11 devices.
+# These eight are the ``codec`` view. C11 (devices) is never simulated.
 CODECS = {
     "opus_wb": ("libopus", "ogg", 16000, (6, 12, 18, 24, 30)),
     "amr_wb": ("libvo_amrwbenc", "amr", 16000, (6.6, 8.85, 14.25, 18.25, 23.05)),
@@ -32,6 +32,14 @@ CODECS = {
     "amr_nb": ("libopencore_amrnb", "amr", 8000, (4.75, 6.7, 8.85, 10.2, 12.2)),
     "speex_nb": ("libspeex", "ogg", 8000, (3.95, 5.95, 11, 18.2, 24.6)),
 }
+# Neural codecs (eval C04 encodec_wb, C07 mp3_encodec_wb): the ``encodec`` view. On eval they are
+# the hardest conditions for a detector that never saw them (EER 8-17% against 1.5-4% on clean;
+# docs/experiment_log.md, 2026-10-08). The csv bitrates are exactly the bandwidths of the public
+# 24 kHz EnCodec model; that ASVspoof 5 used this model is an ASSUMPTION, not verified.
+NEURAL_CODECS = ("encodec_wb", "mp3_encodec_wb")
+ENCODEC_KBPS = (1.5, 3.0, 6.0, 12.0, 24.0)
+_ENCODEC_SR = 24000
+_encodec_model = None  # loaded once per process (each DataLoader worker holds its own copy)
 # Length of channel_descriptor's output: n_bands + the rolloff edge.
 DESCRIPTOR_DIM = 25
 
@@ -68,6 +76,10 @@ def apply_codec(wave: np.ndarray, codec: str, quality: int, sr: int = TARGET_SR)
     """Transcode through a lossy codec at CODEC_Q ``quality`` (1..5); decode to 16 kHz mono."""
     if codec == "clean":
         return wave
+    if codec == "encodec_wb":
+        return _encodec(wave, ENCODEC_KBPS[quality - 1], sr)
+    if codec == "mp3_encodec_wb":  # C07: MP3 first, then EnCodec, each at its own quality
+        return _encodec(apply_codec(wave, "mp3_wb", int(np.random.randint(1, 6)), sr), ENCODEC_KBPS[quality - 1], sr)
     encoder, container, codec_sr, bitrates = CODECS[codec]  # unknown codec raises KeyError
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "src.wav"
@@ -79,6 +91,22 @@ def apply_codec(wave: np.ndarray, codec: str, quality: int, sr: int = TARGET_SR)
         # Decode back with ffmpeg (libsndfile cannot read amr/m4a/speex), to 16 kHz mono wav.
         _run(["ffmpeg", "-y", "-i", str(enc), "-ar", str(sr), "-ac", "1", str(dec)])
         return read_audio(dec, sr)
+
+
+def _encodec(wave: np.ndarray, kbps: float, sr: int) -> np.ndarray:
+    """Encode and decode with EnCodec (24 kHz model) at ``kbps``; back to ``sr``, same length."""
+    global _encodec_model
+    import torch
+    import torchaudio.functional as AF
+
+    if _encodec_model is None:
+        from transformers import EncodecModel
+
+        _encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval()
+    x = AF.resample(torch.from_numpy(np.ascontiguousarray(wave, dtype=np.float32))[None, None], sr, _ENCODEC_SR)
+    with torch.no_grad():
+        y = _encodec_model(x, bandwidth=kbps).audio_values
+    return AF.resample(y[0], _ENCODEC_SR, sr)[0, : wave.size].numpy()
 
 
 def add_noise(wave: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
