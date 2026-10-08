@@ -292,3 +292,63 @@ is known. Block C as built does not beat pooled calibration on unseen codecs. Do
 Open, in order: (1) eval-set scoring (download: 3 of 10 tars; eval extraction ~7 h GPU);
 (2) a leak-free condition input for block C, or drop it; (3) more train data and regularisation
 for the head; (4) LoRA / full fine-tune on full data; (5) multiple seeds and CIs on EER.
+
+### 2026-10-08 — First ASVspoof 5 eval results; minCllr bug fixed
+
+**Metric bug (affects every minCllr above this entry).** `min_cllr` took the logit of the PAV
+posterior without removing the empirical prior log-odds. That is only correct for balanced classes.
+Check: equal-variance Gaussians, true LLR = 4*score, 5% bona fide: Cllr(true LLR) 0.078 but
+min_cllr 0.182 (a floor above an achievable value). Fixed in `metrics/cllr.py`; test added. All sets
+here are ~20% bona fide, so every earlier minCllr is too high (eval pooled 0.267 -> 0.213). Read the
+earlier statement "pooled calibration is within 0.01-0.02 of the floor" as: dev seen codecs, pooled
+0.062 vs corrected floor 0.046. EER, minDCF, actDCF and Cllr are not affected.
+
+**Setup.** As the previous entry: frozen backbones, heads trained on 40% of train (A01-A08), selected
+on dev `select` (34% of dev). Eval: all 680,774 track-1 clips (A17-A32, codecs C01-C11), up to 16 s,
+scored once. No eval number was used for any decision. Single seed. Run dirs: `frozen_xlsr_final`,
+`frozen_wavlm_final`, `cal_eval` under `experiments/runs_partial/`.
+
+**Detection on eval.**
+
+| system | EER | minDCF (p=0.05) | minCllr | EER, clean clips only |
+| --- | --- | --- | --- | --- |
+| frozen XLS-R head | 0.0767 | 0.453 | 0.279 | 0.0431 |
+| frozen WavLM head | **0.0440** | **0.255** | **0.162** | 0.0147 |
+| fusion (weights fit on dev calib: 0.63 XLS-R, 0.15 WavLM) | 0.0579 | 0.311 | 0.213 | 0.0230 |
+
+- Dev and eval disagree on the better backbone: dev prefers XLS-R (0.8% vs 1.6% clean), eval
+  prefers WavLM (4.4% vs 7.7%). The dev-fit fusion therefore down-weights the better system and
+  is worse than WavLM alone. Dev (A09-A16, no codecs) is a poor proxy for eval.
+- Reference only, UNVERIFIED and from a different training setup: proposal section 9 lists a best
+  fused ASVspoof 5 result of EER 3.42% / Cllr 0.19 [CITATION NEEDED]. We are not at that level.
+- Per codec (fused, EER): clean 2.3%, C05 2.5%, C06 2.8%, C11 2.8%, C02 3.3%, C01 3.7%, C03 4.4%,
+  C09 4.6%, C10 5.9%, C08 6.2%, **C04 11.6%, C07 14.0%**. C04/C07 are the EnCodec conditions, never
+  simulated in training. C11 (devices) is also unsimulated and is not hard.
+
+**Calibration on eval (fused scores, all fits on dev calib; Cllr).**
+
+| | global_clean | global_pooled | lookup_oracle | lookup_pred | block C | floor (minCllr) |
+| --- | --- | --- | --- | --- | --- | --- |
+| eval pooled | 0.310 | 0.250 | 0.243 | 0.245 | **0.862** | 0.213 |
+| C04 (unseen) | 0.976 | 0.645 | 0.645 | 0.581 | **2.965** | 0.370 |
+| C07 (unseen) | 1.475 | 0.962 | 0.962 | 0.878 | **6.263** | 0.426 |
+| C11 (unseen) | 0.146 | 0.190 | 0.190 | 0.242 | 0.248 | 0.105 |
+| clean | 0.111 | 0.147 | 0.111 | 0.144 | 0.179 | 0.086 |
+
+actDCF (p=0.05), eval pooled: global_clean 0.334, global_pooled 0.368, lookup_oracle 0.374,
+lookup_pred 0.399, block C 0.539; minDCF 0.311.
+
+- **The premise holds on the unseen neural codecs:** on C04/C07 every calibration is far from
+  the floor (0.645 vs 0.370; 0.962 vs 0.426). Calibration does break under an unseen codec.
+- **No condition-aware method fixes it.** The lookup table has no cell for C04/C07/C11. The
+  predicted-codec lookup gains 0.06-0.08 Cllr on C04/C07 and loses on C11 and clean.
+- **Block C fails on eval:** worst on every condition, catastrophic on the unseen codecs
+  (paired 95% CI of Cllr difference to global_pooled, eval pooled: [+0.591, +0.631]). On dev
+  seen codecs its Cllr (0.039) is below the corrected floor (0.046), which confirms that it adds
+  discrimination through the codec posterior instead of calibrating. **Block C as built is
+  rejected.** Do not use the earlier "97%" or the dev seen-codec numbers as support.
+
+Open, in order: (1) select and fuse on data that looks like eval (codec-coded dev), not clean
+dev; (2) simulate EnCodec; (3) regularise the head and use all of train; (4) LoRA / fine-tune
+with unseen-attack validation; (5) seeds and CIs; (6) a calibration method that degrades
+gracefully on unseen conditions (shrink toward LLR = 0), judged on C04/C07.

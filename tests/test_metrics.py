@@ -72,3 +72,13 @@ def test_bootstrap_ci_brackets_point():
     scores, labels = _separable()
     ci = bootstrap_ci(lambda s, y: compute_eer(s, y)[0], scores, labels, n_resamples=200, seed=1)
     assert ci["lo"] <= ci["point"] <= ci["hi"]
+
+
+@pytest.mark.parametrize("n_bona,n_spoof", [(4000, 4000), (1000, 7000), (300, 7700)])
+def test_min_cllr_is_a_floor_for_unbalanced_classes(n_bona, n_spoof):
+    """Equal-variance Gaussians: the true LLR is 4 * score. minCllr must not exceed its Cllr,
+    whatever the class balance (it did before the prior correction)."""
+    r = np.random.default_rng(1)
+    scores = np.concatenate([r.normal(2, 1, n_bona), r.normal(-2, 1, n_spoof)])
+    labels = np.concatenate([np.ones(n_bona), np.zeros(n_spoof)])
+    assert min_cllr(scores, labels) <= cllr(4 * scores, labels) + 1e-9

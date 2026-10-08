@@ -35,7 +35,9 @@ def min_cllr(scores: np.ndarray, labels: np.ndarray) -> float:
     labels = np.asarray(labels).astype(np.float64)
     iso = IsotonicRegression(y_min=0.0, y_max=1.0, increasing=True, out_of_bounds="clip")
     posterior = iso.fit_transform(scores, labels)
-    # effective prior 0.5 (Cllr weights the two error terms equally) -> optimal llr is the logit.
+    # PAV gives the posterior at the EMPIRICAL class prior. An LLR is prior-free, so remove the
+    # prior log-odds. Without this step the floor is too high whenever the classes are unbalanced.
+    prior = labels.mean()
     with np.errstate(divide="ignore"):
-        opt_llr = np.log(posterior) - np.log1p(-posterior)
+        opt_llr = np.log(posterior) - np.log1p(-posterior) - (np.log(prior) - np.log1p(-prior))
     return cllr(opt_llr, labels)
