@@ -418,11 +418,22 @@ same pass over the audio, so the pending eval extraction gets it for free. `+des
 is the CPU-only pass for the sets already extracted: it never loads a backbone. Measured at
 1500 dev clips in 27 s with 4 workers, so the full train+dev descriptor pass is minutes, not hours.
 
-**Blocked.** `ffmpeg` is not on PATH in this environment, so the `codec` views cannot be produced
-here: `+view=codec` fails in `apply_codec`. The `clean` views run. Installing ffmpeg is the
-prerequisite for the real descriptor pass and therefore for rerunning the calibration study.
+**Note on ffmpeg.** `+view=codec` fails with `FileNotFoundError` unless ffmpeg is on PATH. It is
+installed but not on the default PATH; `scripts/chain_eval.sh` exports the WinGet location, and any
+descriptor or extraction run must do the same.
 
-Open, in order: (1) install ffmpeg, run the descriptor pass for train/dev clean+codec, rerun
-`calibrate.py` and read the precondition first; (2) eval-set scoring, with descriptors now written
-in the same pass; (3) more train data and regularisation for the head; (4) LoRA / full fine-tune on
-full data; (5) multiple seeds and CIs on EER.
+**Relation to the eval entry above.** That entry rejects block C as built, with a far stronger case
+than the dev-only picture: eval pooled Cllr 0.862 against 0.250 for `global_pooled`, and 2.965 /
+6.263 on the unseen neural codecs C04 / C07. Its diagnosis is the same leakage this rebuild removes
+-- "its Cllr (0.039) is below the corrected floor (0.046), which confirms that it adds
+discrimination through the codec posterior instead of calibrating". The rebuild is therefore the
+answer to that entry's open item (6), "a calibration method that degrades gracefully on unseen
+conditions", with one difference: it shrinks toward the best **global calibration** rather than
+toward LLR = 0, which is the stronger baseline of the two. C04 / C07 are now the test that decides
+it, and the null weight on those conditions says whether the shrinkage actually engaged.
+
+Open, in order (this supersedes nothing above; it is the block C thread only): (1) descriptor pass
+for train/dev clean+codec and eval clean, then rerun `calibrate.py +eval=true` and read
+`descriptor_label_probe_eer` before any other number; (2) judge block C on C04 / C07 against
+`global_pooled`, with the paired CI and the per-seed spread, and reject it again if it does not
+degrade gracefully there. The eval entry's items (1)-(5) are unchanged and independent of this.
