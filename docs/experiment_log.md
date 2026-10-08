@@ -352,3 +352,77 @@ Open, in order: (1) select and fuse on data that looks like eval (codec-coded de
 dev; (2) simulate EnCodec; (3) regularise the head and use all of train; (4) LoRA / fine-tune
 with unseen-attack validation; (5) seeds and CIs; (6) a calibration method that degrades
 gracefully on unseen conditions (shrink toward LLR = 0), judged on C04/C07.
+
+### 2026-10-08 — Block C rebuilt: leak-free condition input, bounded extrapolation, held-out stopping
+
+Implementation only. No claim is made or retracted here: the redesign changes what block C *can*
+do, and the numbers that decide its fate still need the real descriptor pass and a rerun of the
+calibration study. Verified end to end on a synthetic score/descriptor set, which exercises the
+wiring and the two guarantees but is not an experiment.
+
+The three recorded defects (2026-10-07) and what now prevents each:
+
+1. **Leakage.** v1's condition vector was the codec log-posterior of a `Head` trained on the
+   detector's own frozen SSL features, so (a, b) carried class evidence and the LLR moved the EER
+   (clean 0.5% -> 0.3%). Block C now reads `channel_descriptor` (`data/condition_grid.py`): the
+   long-term average spectrum in 24 log-spaced bands plus the 99% rolloff edge, from the waveform
+   only. It is exactly loudness-invariant (relative noise floor, interpolated bands) and it tracks
+   bandwidth (clean vs 8 kHz round trip: L2 distance 10.6; clean vs mild quantisation noise: 0.01).
+   `models.label_probe_eer` is now a reported **precondition**: a logistic probe on the descriptor
+   alone must give ~0.5 EER. Anything lower means the descriptor leaks and no calibration claim
+   here is valid. This is the test that would have caught v1.
+2. **Extrapolation.** v1's unconstrained MLP mapped an unseen condition anywhere, so its
+   leave-one-codec-out Cllr swung 0.209 -> 0.517 between two runs of the same study. The residual
+   is now a kernel average over K=8 learned anchors against a **null anchor that carries no
+   residual**: as z leaves the anchors' span every kernel weight vanishes and the map becomes
+   exactly `softplus(a0+0.5413)*s + b0`, one global calibration. On the synthetic leave-one-codec-out
+   the null weight is 1.00 on all 8 held-out codecs, i.e. the guarantee holds by construction.
+   `null_weight` is reported per condition: it says when block C acted at all.
+   - The first version of this fix was **not enough, and the synthetic run caught it**: the null
+     anchor guarantees *a* global calibration, not a good one. With (a0, b0) optimised only inside
+     the full map, an unseen codec reached the fallback at null weight 1.00 and still scored Cllr
+     1.39 against 0.56 for pooled. The fix: the global map gets its own term in the loss
+     (`anchor_weight`) **and** is detached from the residual path, so only that term moves it and
+     the two objectives cannot fight. Unseen-codec Cllr went 1.39 -> 1.02 (own term) -> 0.87
+     (detached). A unit test asserts the fallback stays within 1.15x of pooled calibration.
+   - Consequence worth stating plainly: the fallback minimises Cllr **averaged over conditions**,
+     which is the right uniform prior for a condition never seen, while `global_pooled` optimises
+     a pooled class-balanced logistic fit. The two objectives differ, so block C can lose to
+     pooled on an individual condition even at null weight 1.00. On the synthetic set it beat
+     pooled on 6 of 8 held-out codecs and lost on 2 (opus_wb 0.87 vs 0.56, amr_wb 0.68 vs 0.55).
+     This is reported, not tuned away: the synthetic shifts are +-4 and far larger than real ones.
+3. **Overfitting.** v1 ran a fixed 2000 full-batch steps on all of the calibration data. The calib
+   split is now halved by speaker (`assign_split_by`, 0.75 / 0.25) into `fit` / `stop`, and the step
+   is selected on the held-out `stop` half; the best state is restored. `+hyper_steps` is a knob.
+
+Also: block C is run over `+hyper_seeds` (default 3) and the per-seed Cllr / actDCF mean and
+standard deviation are reported per condition, so the run-to-run variance that reversed the
+Phase-2 result is measured rather than assumed.
+
+**What the synthetic end-to-end run verifies** (wiring and guarantees only, not performance):
+the precondition passes at 0.505; `eer/hypernet - eer` is **+0.0000 on every condition** in both
+studies, i.e. block C is now a genuine per-condition calibrator and no longer moves discrimination
+the way v1 did; null weight is 1.00 on all 8 held-out codecs; and the per-seed Cllr standard
+deviation on leave-one-codec-out is **0.000**, because an unseen condition returns the
+seed-independent fallback. v1's headline instability cannot recur in this architecture.
+
+**Net effect on the code.** `calibrate.py` lost `fit_condition_classifier` and `condition_vector`,
+and no longer loads SSL features at all: the leave-one-codec-out loop no longer retrains a codec
+classifier per codec, which deletes the exact variance source behind the 0.209 / 0.517 swing and
+cuts the study's GPU time to zero. The `lookup_pred` baseline keeps its predicted codec, now from
+a logistic classifier on the 25-dim descriptor. Descriptors are joined on `utt`, so nothing assumes
+a shared row order between the score files and the feature cache.
+
+`extract_features.py` writes `<features>/descriptor/<partition>_<view>.npy` [N, 25] float32 in the
+same pass over the audio, so the pending eval extraction gets it for free. `+descriptor_only=true`
+is the CPU-only pass for the sets already extracted: it never loads a backbone. Measured at
+1500 dev clips in 27 s with 4 workers, so the full train+dev descriptor pass is minutes, not hours.
+
+**Blocked.** `ffmpeg` is not on PATH in this environment, so the `codec` views cannot be produced
+here: `+view=codec` fails in `apply_codec`. The `clean` views run. Installing ffmpeg is the
+prerequisite for the real descriptor pass and therefore for rerunning the calibration study.
+
+Open, in order: (1) install ffmpeg, run the descriptor pass for train/dev clean+codec, rerun
+`calibrate.py` and read the precondition first; (2) eval-set scoring, with descriptors now written
+in the same pass; (3) more train data and regularisation for the head; (4) LoRA / full fine-tune on
+full data; (5) multiple seeds and CIs on EER.

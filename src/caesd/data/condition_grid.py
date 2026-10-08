@@ -32,6 +32,9 @@ CODECS = {
     "amr_nb": ("libopencore_amrnb", "amr", 8000, (4.75, 6.7, 8.85, 10.2, 12.2)),
     "speex_nb": ("libspeex", "ogg", 8000, (3.95, 5.95, 11, 18.2, 24.6)),
 }
+# Length of channel_descriptor's output: n_bands + the rolloff edge.
+DESCRIPTOR_DIM = 25
+
 # Eval-set codec id -> the simulated codec that matches it (for the lookup-table baseline).
 EVAL_CODEC = {"C01": "opus_wb", "C02": "amr_wb", "C03": "speex_wb", "C05": "mp3_wb", "C06": "m4a_wb",
               "C08": "opus_nb", "C09": "amr_nb", "C10": "speex_nb"}
@@ -93,6 +96,29 @@ def apply_reverb(wave: np.ndarray, impulse_response: np.ndarray) -> np.ndarray:
     wet = fftconvolve(wave, impulse_response)[: wave.size]
     peak = np.max(np.abs(wet)) + 1e-12
     return wet / peak * (np.max(np.abs(wave)) + 1e-12)
+
+
+def channel_descriptor(wave: np.ndarray, sr: int = TARGET_SR, n_bands: int = 24) -> np.ndarray:
+    """Signal-level channel descriptor for block C: the long-term average spectrum in log-spaced
+    bands (mean-removed, so loudness drops out) plus the 99% rolloff edge.
+
+    It describes the CHANNEL -- bandwidth, quantisation noise floor -- and it never sees the SSL
+    features the detector uses, which is what made v1's condition vector leak class evidence.
+    Too coarse to resolve a vocoder's harmonic / phase artefact; ``models.label_probe_eer`` checks
+    that claim rather than assuming it.  [n_bands + 1]
+    """
+    from scipy.signal import welch
+
+    freq, power = welch(wave, fs=sr, nperseg=512)
+    if not power.any():
+        raise ValueError("silent clip has no channel descriptor")
+    # The noise floor is clamped RELATIVE to the peak (100 dB) and the band means are read by
+    # interpolation, not by averaging bins: both keep the descriptor exactly loudness-invariant,
+    # which an absolute floor and empty low log-spaced bands would not.
+    spectrum = np.log10(np.maximum(power, power.max() * 1e-10))
+    log_power = np.interp(np.geomspace(50.0, sr / 2, n_bands), freq, spectrum)
+    rolloff = freq[np.searchsorted(np.cumsum(power) / power.sum(), 0.99)] / (sr / 2)
+    return np.append(log_power - log_power.mean(), rolloff).astype(np.float32)
 
 
 def _match_length(noise: np.ndarray, length: int) -> np.ndarray:

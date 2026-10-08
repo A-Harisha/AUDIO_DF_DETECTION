@@ -7,14 +7,16 @@ import torch
 from torch.utils.data import Dataset
 
 from ..utils.io import TARGET_SR, read_audio
-from .condition_grid import CODECS
+from .condition_grid import CODECS, channel_descriptor
 
 CODEC_NAMES = ("clean", *CODECS)  # channel-class index used everywhere
 
 
 class AudioDataset(Dataset):
     """``rawboost`` and ``codec`` are optional augmentations (RawBoost first, then the codec, as a
-    recording is degraded before it is transmitted). ``train`` crops at a random position."""
+    recording is degraded before it is transmitted). ``train`` crops at a random position.
+    ``descriptor`` adds block C's channel descriptor of the FINAL waveform, i.e. after every
+    augmentation, so it describes the channel the detector actually scored."""
 
     def __init__(
         self,
@@ -23,12 +25,14 @@ class AudioDataset(Dataset):
         rawboost=None,
         codec=None,
         train: bool = False,
+        descriptor: bool = False,
     ) -> None:
         self.manifest = manifest.reset_index(drop=True)
         self.max_len = int(max_seconds * TARGET_SR)
         self.rawboost = rawboost
         self.codec = codec
         self.train = train
+        self.descriptor = descriptor
 
     def __len__(self) -> int:
         return len(self.manifest)
@@ -47,8 +51,11 @@ class AudioDataset(Dataset):
         if self.codec is not None:
             wave, channel = self.codec(wave, TARGET_SR)
             wave = wave[: self.max_len]
-        return {"wave": torch.from_numpy(np.ascontiguousarray(wave, dtype=np.float32)), "idx": idx,
+        item = {"wave": torch.from_numpy(np.ascontiguousarray(wave, dtype=np.float32)), "idx": idx,
                 "label": int(row["label"]), "channel": CODEC_NAMES.index(channel)}
+        if self.descriptor:
+            item["descriptor"] = torch.from_numpy(channel_descriptor(wave, TARGET_SR))
+        return item
 
 
 def collate(items: list[dict]) -> dict:
@@ -57,8 +64,11 @@ def collate(items: list[dict]) -> dict:
     wave = torch.zeros(len(items), int(lengths.max()))
     for i, it in enumerate(items):
         wave[i, : lengths[i]] = it["wave"]
-    return {"x": wave, "lengths": lengths, **{k: torch.tensor([it[k] for it in items])
-                                              for k in ("idx", "label", "channel")}}
+    batch = {"x": wave, "lengths": lengths, **{k: torch.tensor([it[k] for it in items])
+                                               for k in ("idx", "label", "channel")}}
+    if "descriptor" in items[0]:
+        batch["descriptor"] = torch.stack([it["descriptor"] for it in items])
+    return batch
 
 
 def seed_worker(worker_id: int) -> None:
