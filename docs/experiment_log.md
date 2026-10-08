@@ -437,3 +437,43 @@ for train/dev clean+codec and eval clean, then rerun `calibrate.py +eval=true` a
 `descriptor_label_probe_eer` before any other number; (2) judge block C on C04 / C07 against
 `global_pooled`, with the paired CI and the per-seed spread, and reject it again if it does not
 degrade gracefully there. The eval entry's items (1)-(5) are unchanged and independent of this.
+
+### 2026-10-08 — The block C precondition FAILS on dev and passes across attacks
+
+First real-data run of the leakage gate added with the block C rebuild. Descriptors from
+`chain_descriptor.sh` (clean views; 73,000 train and 47,400 dev clips). The gate fired, which is
+what it was for.
+
+| probe (logistic, class-balanced, on the 25-dim descriptor alone) | EER | verdict |
+| --- | --- | --- |
+| fit dev `calib` (A09-A16), test dev `select` (A09-A16) | **0.2553** | FAILS |
+| fit train (A01-A08), test dev `select` (A09-A16) | **0.5527** | passes (chance) |
+| fit train speakers, test held-out train speakers (A01-A08) | 0.2798 | FAILS |
+| rolloff edge alone, fit calib test select | 0.4808 | passes |
+| the 24 LTAS bands alone, fit calib test select | 0.2555 | FAILS |
+
+**Reading.** The long-term average spectrum carries an **attack-specific** signature, not a general
+"spoof has a different spectrum" effect. A probe recovers the class whenever it is fit and tested on
+the SAME attacks (0.255, 0.280) and gets nothing at all across attacks (0.553, i.e. worse than
+chance -- the train-attack signature does not transfer to A09-A16). The rolloff edge, which is the
+part that actually measures bandwidth, is label-free on its own (0.481); the leak is in the spectral
+shape. Per-generator rolloff means are flat (0.550-0.697 across A01-A08 and bona fide 0.586), so
+this is not a bandwidth confound.
+
+**Consequence for the study protocol, which is the useful part.** Block C is fit on dev `calib` and
+tested on dev `select` -- the same attacks, i.e. exactly the 0.255 case. So the dev seen-codec and
+leave-one-codec-out numbers are **structurally unusable** for a calibration claim, with this
+descriptor or with v1's codec posterior: the condition input carries class evidence either way, and
+that is how v1 produced a dev Cllr (0.039) below the corrected floor (0.046). The eval protocol is
+different: calibration is fit on dev `calib` (A09-A16) and applied to eval (A17-A32), which is the
+cross-attack case where the descriptor is label-free. **Therefore eval is the only legitimate test
+of block C, and the dev numbers must not be reported as support.** This retrospectively explains
+why v1's dev win did not survive to eval.
+
+**Not patched, deliberately.** Tuning the descriptor until the gate passes would be fitting to the
+gate. The design's own falsification criterion (stated with the rebuild) is met for dev.
+
+Still open on this thread: the codec views are extracting, so whether the descriptor separates the
+simulated codecs on real audio is not yet measured -- that is its actual job and it is necessary for
+block C to be worth running at all. Then `calibrate.py +eval=true`, reading ONLY the eval section
+and C04 / C07, with `null_weight` to say whether the shrinkage engaged.
