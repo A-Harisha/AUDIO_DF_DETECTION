@@ -477,3 +477,51 @@ Still open on this thread: the codec views are extracting, so whether the descri
 simulated codecs on real audio is not yet measured -- that is its actual job and it is necessary for
 block C to be worth running at all. Then `calibrate.py +eval=true`, reading ONLY the eval section
 and C04 / C07, with `null_weight` to say whether the shrinkage engaged.
+
+### 2026-10-08 — Block C v2 on eval: no longer catastrophic, still worse than pooled. Rejected again.
+
+Study `experiments/runs_partial/cal_eval_v2` (fused `frozen_xlsr_final` + `frozen_wavlm_final`, as
+`cal_eval`; block C v2 over seeds 0-2; all fits on dev `calib`). Per the previous entry only the
+eval section is a legitimate test; the dev sections are not read as support.
+Claim tested: block C gives better LLRs than one pooled calibration and degrades gracefully on
+unseen codecs (C04, C07).
+
+**Preconditions.**
+- Label probe on the descriptor alone, dev `select`, clean + codec views: EER **0.319** (must be
+  ~0.5). Fails, as on clean views (0.255).
+- The descriptor does not identify the simulated codecs. Codec-classifier accuracy on dev: clean
+  0.84, mp3_wb 0.93, opus_nb 0.91, amr_nb 0.66, speex_nb 0.66, amr_wb 0.48, m4a_wb 0.20, speex_wb
+  0.19, **opus_wb 0.007**. It separates narrowband from wideband and little else. This was the
+  open question of the previous entry; the answer is no.
+
+**Eval (Cllr; paired 95% CI of block C minus global_pooled).**
+
+| | global_clean | global_pooled | lookup_oracle | block C v2 (seed mean +- std) | CI of difference | floor | null weight |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| eval pooled | 0.310 | **0.250** | 0.243 | 0.295 (0.289 +- 0.006) | [+0.044, +0.047] | 0.213 | 0.66 |
+| C04 (unseen) | 0.976 | **0.645** | 0.645 | 0.735 (0.708 +- 0.019) | [+0.077, +0.100] | 0.370 | 0.53 |
+| C07 (unseen) | 1.475 | **0.962** | 0.962 | 1.216 (1.169 +- 0.034) | [+0.238, +0.269] | 0.426 | 0.49 |
+| C11 (unseen) | 0.146 | 0.190 | 0.190 | 0.215 (0.221 +- 0.008) | [+0.024, +0.025] | 0.105 | 0.99 |
+| clean | 0.111 | 0.147 | 0.111 | 0.183 (0.181 +- 0.006) | [+0.035, +0.038] | 0.086 | 0.59 |
+| C10 (speex_nb) | 0.312 | 0.220 | 0.229 | **0.212** (0.212 +- 0.001) | [-0.010, -0.008] | 0.204 | 0.99 |
+
+actDCF (p=0.05), eval pooled: global_clean 0.334, global_pooled 0.368, block C 0.476
+(CI of difference [+0.105, +0.113]); minDCF 0.311.
+
+- v2 removed the v1 collapse (eval pooled Cllr 0.862 -> 0.295; C07 6.26 -> 1.22) and its seed
+  spread is small (std <= 0.034). The rebuild did what it was built to do on stability.
+- It is still **worse than global_pooled on 11 of 12 conditions**, with CIs that exclude zero. The
+  single win (C10) is 0.009 Cllr.
+- **It does not degrade gracefully on the unseen neural codecs.** The null-anchor weight (1 = plain
+  global calibration) is 0.53 on C04 and 0.49 on C07, the same as on clean (0.59): the descriptor
+  does not see EnCodec audio as unfamiliar, so block C acts there with confidence and makes Cllr
+  worse. It does retreat on narrowband (0.99 on C08-C10) and on C11.
+- Simplest strong baselines on eval: `global_pooled` for Cllr (0.250), `global_clean` for actDCF
+  (0.334). No condition-aware method beats both.
+
+**Decision.** By the criterion written before this run (must beat `global_pooled` on C04 / C07 and
+degrade gracefully there), **block C v2 is rejected.** Not tuned further against eval: that would
+be fitting to the test set. The calibration premise itself stands (C04 / C07 pooled Cllr 0.645 /
+0.962 vs floor 0.370 / 0.426) and is unsolved. What a third attempt would need, if made: a
+condition signal that recognises an unseen codec as unseen (the long-term spectrum does not),
+developed on a held-out codec family in dev, never on eval.
