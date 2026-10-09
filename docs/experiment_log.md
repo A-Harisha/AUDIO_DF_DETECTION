@@ -614,3 +614,32 @@ Dropout 0.5 is outside the three-seed range on clean for both backbones. Not yet
 **Infrastructure.** The EnCodec extraction (chain_encodec.sh) crashed on 2026-10-08 after 3 min
 (DataLoader worker exited). On 2026-10-09 the Windows WMI service hung: `platform.machine()` blocks,
 so `import pandas` blocks, so every script blocks. Unrelated to our code; needs a service restart.
+
+## 2026-10-09 — Dropout 0.5 on eval; EnCodec moved to the GPU
+
+**Claim tested:** the dev-only head sweep said dropout 0.5 beats the three-seed range. Does it hold on eval?
+Runs `frozen_{wavlm,xlsr}_drop50_final` (views clean + codec, 40% of train, seed 1337, one seed each);
+controls `frozen_{wavlm,xlsr}_final` (dropout 0.2, otherwise identical). Official cost model.
+
+| Eval (680,774 clips) | EER % | minDCF | C04 EER | C07 EER | clean EER |
+|---|---|---|---|---|---|
+| WavLM, dropout 0.2 | 4.40 | 0.1227 | 8.20 | 9.78 | 1.47 |
+| WavLM, dropout 0.5 | 4.95 | 0.1399 | 9.29 | 11.28 | 1.48 |
+| XLS-R, dropout 0.2 | 7.67 | 0.2161 | 14.19 | 16.83 | 4.31 |
+| XLS-R, dropout 0.5 | 6.80 | 0.1970 | 14.35 | 17.30 | 2.47 |
+
+Adversarial attacks, EER % (attack vs all bona fide): A18 / A20 / A23 / A27 / A30 / A31 / A32
+- WavLM 0.2: 1.92 / 1.93 / 2.25 / 2.16 / 3.00 / 6.21 / 1.80
+- WavLM 0.5: 2.21 / 1.79 / 1.97 / 2.59 / 3.66 / 6.59 / 2.35
+- XLS-R 0.2: 7.15 / 2.59 / 5.27 / 6.29 / 14.76 / 17.11 / 4.41
+- XLS-R 0.5: 5.50 / 3.29 / 4.04 / 6.03 / 9.77 / 11.94 / 5.02
+
+**Result:** the dev gain does not transfer for WavLM (eval gets worse, mostly on the codecs); it does for
+XLS-R (clean and most codecs better, C04 / C07 not). One seed per cell and no eval seed range, so the
+size of either effect is not established. This is one more case where dev (clean, A09-A16) misleads.
+Dropout is NOT chosen from this table (that would be selection on eval); it needs the stress-dev set.
+Neither head reaches the single-model target (EER < 4.17%, minDCF < 0.117).
+
+**EnCodec view:** on CPU in DataLoader workers, EnCodec took 7 min per batch of 24 and failed with
+"bad allocation" (cause of the 8 Oct crash is presumed the same; not confirmed). It now runs on the GPU
+in the main process; workers do only the MP3 step for the C07 simulation. Dev view: 47,400 clips in 2 h.
