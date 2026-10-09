@@ -693,3 +693,27 @@ capacity between views. Both EnCodec heads are at or below the verified single-s
 (EER 4.17%, minDCF 0.117); dropout 0.2 gives 3.96% / 0.1083.
 **Caution:** two dropout values were both scored on eval, so quoting the better one is a selection on
 eval of size two. One seed each; the 0.21-point gap between them is not shown to exceed seed noise.
+
+## 2026-10-09 — Seed range of the WavLM + EnCodec head: the 3.96% does not hold
+
+Runs `frozen_wavlm_enc_seed{1,2}`: identical to `frozen_wavlm_enc` (dropout 0.2, views clean + codec +
+encodec, 40% of train) except the seed.
+
+| Seed | best epoch | select EER % | eval EER % | eval minDCF | C04 | C07 | clean | A31 |
+|---|---|---|---|---|---|---|---|---|
+| 1337 | 19 | 4.61 | 3.96 | 0.1083 | 6.06 | 7.15 | 1.69 | 6.76 |
+| 1 | 21 | 4.85 | 4.09 | 0.1132 | 6.21 | 7.53 | 1.88 | 8.05 |
+| 2 | 1 | 4.92 | 5.13 | 0.1358 | 7.43 | 8.48 | 2.88 | 11.09 |
+| mean | | | 4.39 | 0.1191 | | | | |
+
+**Result:** the seed range (3.96-5.13%) is wider than every effect measured today. The three-seed mean
+(4.39% / 0.119) does not beat the single-system reference (4.17% / 0.117), and the earlier entries'
+"at or below the reference" holds for two seeds of three only. What does hold on all three seeds: C04 and
+C07 are below the no-EnCodec control (8.20 / 9.78); the control itself is one seed.
+**Cause seen:** the select EER moves by +-0.5 points from epoch to epoch (e.g. 5.38 -> 6.90 -> 4.88), so
+"best epoch" is the minimum of a noisy curve. Seed 2 stopped at epoch 1, an undertrained head. Its last
+ten epochs are flat (5.2-5.6), like the other seeds.
+**Also seen:** with the encodec view, dev clean EER is ~3.0-3.4% against ~1.5% without it. On dev the
+view costs clean accuracy; on eval the cost is 0.2 points. One more dev / eval disagreement.
+**Not done (would be selection on eval):** rescoring eval with the last-epoch weights. The selection
+rule must be fixed on dev (last epoch or an average of the last epochs), then all seeds rerun.
