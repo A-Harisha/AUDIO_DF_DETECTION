@@ -671,3 +671,25 @@ used the public 24 kHz EnCodec model is still unverified).
 minDCF 0.117):** WavLM + encodec has minDCF 0.1144 and EER equal to 4.17% at two decimals. This is a
 frozen backbone with a 0.26M-parameter head on 40% of train. Limits: one seed, no confidence interval,
 and the comparison with the dropout 0.2 control (4.40%) is confounded by the dropout change.
+
+## 2026-10-09 — EnCodec view at dropout 0.2 (removes the dropout confound)
+
+Run `frozen_wavlm_enc`: identical to `frozen_wavlm_enc_drop50` except dropout 0.2. Its control is
+`frozen_wavlm_final` (dropout 0.2, views clean + codec). 40% of train, seed 1337, official cost model.
+
+| Eval | EER % | minDCF | C04 EER | C07 EER | clean EER |
+|---|---|---|---|---|---|
+| WavLM, dropout 0.2, control | 4.40 | 0.1227 | 8.20 | 9.78 | 1.47 |
+| WavLM, dropout 0.2, + encodec | 3.96 | 0.1083 | 6.06 | 7.15 | 1.69 |
+| WavLM, dropout 0.5, + encodec | 4.17 | 0.1144 | 6.60 | 7.77 | 1.60 |
+
+Adversarial EER %, dropout 0.2 + encodec (A18 / A20 / A23 / A27 / A30 / A31 / A32):
+1.20 / 1.70 / 1.85 / 2.16 / 2.48 / 6.76 / 1.77
+
+**Result:** at fixed dropout the EnCodec view lowers pooled EER by 0.44 (dropout 0.2) and 0.78 (dropout
+0.5) points; C04 / C07 by 2.1-3.5 points. The price is visible at dropout 0.2: clean and the classic
+codecs get 0.1-0.7 points worse (clean 1.47 -> 1.69, C08 4.80 -> 5.50), i.e. the 0.26M head trades
+capacity between views. Both EnCodec heads are at or below the verified single-system reference
+(EER 4.17%, minDCF 0.117); dropout 0.2 gives 3.96% / 0.1083.
+**Caution:** two dropout values were both scored on eval, so quoting the better one is a selection on
+eval of size two. One seed each; the 0.21-point gap between them is not shown to exceed seed noise.
