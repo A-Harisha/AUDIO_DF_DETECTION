@@ -567,11 +567,44 @@ C08 4.80 / 0.123, C10 5.71 / 0.138, **C04 8.20 / 0.220, C07 9.78 / 0.261**.
 - Not checked: arXiv:2602.13596 (BreathNet) result tables; a better single system may exist.
 - Single-model target (the user will not use ensembles): EER < 4.17% and minDCF < 0.117 on eval.
 
-**Adversarial attacks in eval (arXiv:2408.08739, Table 2):** A18, A20, A23, A27, A30 (Malafide /
-Malacopula on A17, A12, A09, A26, A18), A31, A32 (Malacopula on A22, A25). Paired EER, base ->
-adversarial, XLS-R vs WavLM: A17->A18 1.6->7.2 vs 0.7->1.9; A18->A30 7.2->14.8 vs 1.9->3.0;
-A22->A31 2.7->17.1 vs 2.8->6.2; A26->A27 1.7->6.3 vs 1.1->2.2; A25->A32 1.6->4.4 vs 0.9->1.8.
-The adversarial filter multiplies XLS-R error 3-6x and WavLM error ~2x. Why is not established.
+**Adversarial attacks in eval.** Which attacks are adversarial, and their base attacks, are from
+arXiv:2408.08739 Table 2: A18, A20, A23, A27, A30 (Malafide / Malacopula on A17, A12, A09, A26,
+A18), A31, A32 (Malacopula on A22, A25). **The EER numbers below are OURS**, computed from
+`scores_eval_clean.parquet`; an earlier version of this entry presented them under the paper's
+citation, which was wrong. A20 (base A12) and A23 (base A09) have dev-set bases, so they have no
+in-eval pair.
+
+Paired EER, base -> adversarial, our two single frozen systems:
+
+| pair | XLS-R | WavLM |
+| --- | --- | --- |
+| A17 -> A18 | 1.62 -> 7.15 (4.4x) | 0.68 -> 1.92 (2.8x) |
+| A18 -> A30 | 7.15 -> 14.76 (2.1x) | 1.92 -> 3.00 (1.6x) |
+| A22 -> A31 | 2.68 -> 17.11 (6.4x) | 2.84 -> 6.21 (2.2x) |
+| A25 -> A32 | 1.61 -> 4.41 (2.7x) | 0.92 -> 1.80 (2.0x) |
+| A26 -> A27 | 1.68 -> 6.29 (3.7x) | 1.08 -> 2.16 (2.0x) |
+
+Mean per-attack EER, benign (9 attacks) vs adversarial (7):
+
+| system | benign | adversarial | ratio |
+| --- | --- | --- | --- |
+| frozen XLS-R-300M | 3.35% | 8.22% | **2.45x** |
+| frozen WavLM-Large | 3.00% | 2.75% | **0.92x** |
+
+- **WavLM is adversarially robust here and XLS-R is not.** On the mean over attacks WavLM does not
+  degrade at all (0.92x); the adversarial filter multiplies XLS-R error 2.1-6.4x per pair and 2.45x
+  on the mean. The per-pair ratio is still ~2x for WavLM, so the filter does hurt it; the mean is
+  flat because WavLM's benign mean is dragged up by A28 (below).
+- **For WavLM the binding constraint is NOT adversarial.** Its worst attacks are **A28 12.13%** and
+  **A24 5.38%**, both benign; the worst adversarial one is A31 at 6.21%. For XLS-R the two worst are
+  adversarial (A31 17.11%, A30 14.76%) with A28 third at 13.25%. A28 is the single largest error
+  source for the backbone we would actually ship. What A28 is: [CITATION NEEDED].
+- Every eval clip carries a codec label, so these per-attack numbers already pool over C01-C11.
+  Adversarial and codec effects do not compound on WavLM (coded clips: benign 5.14%, adversarial
+  3.35%, 0.65x) and do on XLS-R (5.72% vs 9.55%, 1.67x).
+- Bearing on the goal: picking WavLM as the single backbone already buys most of the adversarial
+  robustness, so "adversarially safe" is close to free and A28 is the open problem. Single seed,
+  40% of train, no fine-tuning. No CIs yet.
 
 **Head sweep (dev select only; clean / codec EER).** WavLM: seeds 1337, 1, 2 = 1.59 / 3.15,
 1.50 / 2.99, 1.63 / 3.30; dropout 0.5 = **1.13 / 2.76**; wd 0.1 + lr 3e-4 = 1.61 / 3.22.
