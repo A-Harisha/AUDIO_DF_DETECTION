@@ -32,14 +32,15 @@ CODECS = {
     "amr_nb": ("libopencore_amrnb", "amr", 8000, (4.75, 6.7, 8.85, 10.2, 12.2)),
     "speex_nb": ("libspeex", "ogg", 8000, (3.95, 5.95, 11, 18.2, 24.6)),
 }
-# Neural codecs (eval C04 encodec_wb, C07 mp3_encodec_wb): the ``encodec`` view. On eval they are
+# Neural codecs (eval C04 encodec_wb, C07 mp3_encodec_wb): the ``encodec`` view. ``apply_codec`` does
+# not know them; the caller runs ``encodec`` on the GPU (after ``mp3_wb`` for C07). On eval they are
 # the hardest conditions for a detector that never saw them (EER 8-17% against 1.5-4% on clean;
 # docs/experiment_log.md, 2026-10-08). The csv bitrates are exactly the bandwidths of the public
 # 24 kHz EnCodec model; that ASVspoof 5 used this model is an ASSUMPTION, not verified.
 NEURAL_CODECS = ("encodec_wb", "mp3_encodec_wb")
 ENCODEC_KBPS = (1.5, 3.0, 6.0, 12.0, 24.0)
 _ENCODEC_SR = 24000
-_encodec_model = None  # loaded once per process (each DataLoader worker holds its own copy)
+_encodec_model = None  # loaded once, on the device of the first ``encodec`` call
 # Length of channel_descriptor's output: n_bands + the rolloff edge.
 DESCRIPTOR_DIM = 25
 
@@ -76,10 +77,6 @@ def apply_codec(wave: np.ndarray, codec: str, quality: int, sr: int = TARGET_SR)
     """Transcode through a lossy codec at CODEC_Q ``quality`` (1..5); decode to 16 kHz mono."""
     if codec == "clean":
         return wave
-    if codec == "encodec_wb":
-        return _encodec(wave, ENCODEC_KBPS[quality - 1], sr)
-    if codec == "mp3_encodec_wb":  # C07: MP3 first, then EnCodec, each at its own quality
-        return _encodec(apply_codec(wave, "mp3_wb", int(np.random.randint(1, 6)), sr), ENCODEC_KBPS[quality - 1], sr)
     encoder, container, codec_sr, bitrates = CODECS[codec]  # unknown codec raises KeyError
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "src.wav"
@@ -93,8 +90,10 @@ def apply_codec(wave: np.ndarray, codec: str, quality: int, sr: int = TARGET_SR)
         return read_audio(dec, sr)
 
 
-def _encodec(wave: np.ndarray, kbps: float, sr: int) -> np.ndarray:
-    """Encode and decode with EnCodec (24 kHz model) at ``kbps``; back to ``sr``, same length."""
+def encodec(wave, kbps: float, sr: int = TARGET_SR):
+    """Encode and decode a torch waveform [T] with EnCodec (24 kHz model) at ``kbps``; back to
+    ``sr``, same length, on the device of ``wave``. It runs in the main process on the GPU: on CPU
+    in DataLoader workers it took minutes per batch and died with "bad allocation" (2026-10-09)."""
     global _encodec_model
     import torch
     import torchaudio.functional as AF
@@ -102,11 +101,10 @@ def _encodec(wave: np.ndarray, kbps: float, sr: int) -> np.ndarray:
     if _encodec_model is None:
         from transformers import EncodecModel
 
-        _encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval()
-    x = AF.resample(torch.from_numpy(np.ascontiguousarray(wave, dtype=np.float32))[None, None], sr, _ENCODEC_SR)
+        _encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().to(wave.device)
     with torch.no_grad():
-        y = _encodec_model(x, bandwidth=kbps).audio_values
-    return AF.resample(y[0], _ENCODEC_SR, sr)[0, : wave.size].numpy()
+        y = _encodec_model(AF.resample(wave[None, None], sr, _ENCODEC_SR), bandwidth=kbps).audio_values
+    return AF.resample(y[0, 0], _ENCODEC_SR, sr)[: wave.numel()]
 
 
 def add_noise(wave: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:

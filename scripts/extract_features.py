@@ -37,7 +37,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from caesd.data.augment import CodecAugment, RawBoost
-from caesd.data.condition_grid import DESCRIPTOR_DIM, NEURAL_CODECS
+from caesd.data.condition_grid import DESCRIPTOR_DIM, ENCODEC_KBPS, channel_descriptor, encodec
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, collate
 from caesd.models import Backbone
 from caesd.utils.logging import get_logger, log_hparams
@@ -90,8 +90,8 @@ def main(cfg: DictConfig) -> None:
             raise RuntimeError(f"cannot resume: {desc_out}.npy has shape {desc.shape}, need {shape}")
         log.info("shape | %s = %s", desc_out, shape)
     if resume:
-        state = np.load(state_path)
-        done, channel = state["done"], state["channel"]
+        with np.load(state_path) as state:  # closed here: an open handle blocks the final unlink on Windows
+            done, channel = state["done"], state["channel"]
     else:
         done, channel = np.zeros(len(manifest), bool), np.zeros(len(manifest), np.int64)
     log.info("clips already done: %d / %d", int(done.sum()), len(done))
@@ -100,8 +100,8 @@ def main(cfg: DictConfig) -> None:
         manifest, cfg.data.max_seconds,
         rawboost=RawBoost() if view == "rb_codec" else None,
         codec=(CodecAugment() if view in ("codec", "rb_codec")
-               else CodecAugment(codecs=NEURAL_CODECS) if view == "encodec" else None),
-        descriptor=write_desc,
+               else CodecAugment(p=0.5, codecs=("mp3_wb",)) if view == "encodec" else None),
+        descriptor=write_desc and view != "encodec",
     )
     # Read in tar order (sequential disk access); inside each window of 100 batches, sort by size
     # so a batch holds clips of similar length.
@@ -117,8 +117,16 @@ def main(cfg: DictConfig) -> None:
 
     for step, batch in enumerate(loader):
         idx = batch["idx"].numpy()
-        if backbones:  # descriptor_only never touches the GPU
+        if backbones or view == "encodec":  # descriptor_only of the other views never touches the GPU
             x, lengths = batch["x"].to(cfg.device), batch["lengths"].to(cfg.device)
+        if view == "encodec":  # the workers did MP3 on half of the clips (C07); EnCodec runs here
+            for j, (i, n) in enumerate(zip(idx, lengths.tolist(), strict=True)):
+                x[j, :n] = encodec(x[j, :n], ENCODEC_KBPS[np.random.default_rng(i).integers(5)])
+            batch["channel"] = torch.where(batch["channel"] == 0, CODEC_NAMES.index("encodec_wb"),
+                                           CODEC_NAMES.index("mp3_encodec_wb"))
+            if desc is not None:
+                batch["descriptor"] = torch.stack([torch.from_numpy(channel_descriptor(w[:n].cpu().numpy()))
+                                                   for w, n in zip(x, lengths.tolist(), strict=True)])
         for feat, backbone in zip(feats, backbones, strict=True):
             with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
                 feat[idx] = backbone(x, lengths).float().cpu().numpy().astype(np.float16)
