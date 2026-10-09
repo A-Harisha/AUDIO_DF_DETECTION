@@ -8,10 +8,14 @@ import numpy as np
 
 from .eer import _split, compute_det_curve
 
-# ASVspoof 5 primary-metric defaults.
-P_TARGET = 0.05
+# ASVspoof 5 track-1 cost model: spoof prior 0.05, C_miss = 1, C_fa = 10 (as stated in
+# arXiv:2501.05545, Appendix A; confirm against the ASVspoof 5 evaluation plan before publishing).
+# P_TARGET is the BONA FIDE prior, so it is 0.95. Until 2026-10-09 these were 0.05 / 1 / 1 (the
+# prior on the wrong class), so every minDCF and actDCF logged before that date is on a different
+# scale and cannot be compared with published values. EER, Cllr and minCllr were not affected.
+P_TARGET = 0.95
 C_MISS = 1.0
-C_FA = 1.0
+C_FA = 10.0
 
 
 def _norm(p_target: float, c_miss: float, c_fa: float) -> float:

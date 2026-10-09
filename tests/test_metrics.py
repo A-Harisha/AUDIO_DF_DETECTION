@@ -82,3 +82,13 @@ def test_min_cllr_is_a_floor_for_unbalanced_classes(n_bona, n_spoof):
     scores = np.concatenate([r.normal(2, 1, n_bona), r.normal(-2, 1, n_spoof)])
     labels = np.concatenate([np.ones(n_bona), np.zeros(n_spoof)])
     assert min_cllr(scores, labels) <= cllr(4 * scores, labels) + 1e-9
+
+
+def test_dcf_defaults_are_the_asvspoof5_cost_model():
+    """Spoof prior 0.05, C_miss 1, C_fa 10: accepting every clip costs 10 * 0.05 = 0.5, which is
+    the normaliser, so a detector with no information scores exactly 1. A detector that rejects
+    10% of bona fide and accepts 2% of spoof costs (0.95 * 0.10 + 0.5 * 0.02) / 0.5 = 0.21."""
+    labels = np.concatenate([np.ones(1000), np.zeros(1000)])
+    assert min_dcf(np.zeros(2000), labels) == pytest.approx(1.0)
+    llr = np.concatenate([np.full(900, 5.0), np.full(100, -5.0), np.full(20, 5.0), np.full(980, -5.0)])
+    assert act_dcf(llr, labels) == pytest.approx(0.21)

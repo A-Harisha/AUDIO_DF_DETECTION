@@ -27,7 +27,7 @@ speaker-disjoint ``fit`` / ``stop`` halves of the calib split and run over ``+hy
 its variance is measured rather than assumed.
 
 With several ``runs`` the scores are first fused by logistic regression fit on the calib split.
-Metrics use the ASVspoof 5 prior (p_target = 0.05). Writes experiments/runs/<study>/.
+Metrics use the ASVspoof 5 cost model (spoof prior 0.05, C_miss 1, C_fa 10). Writes experiments/runs/<study>/.
 """
 from __future__ import annotations
 

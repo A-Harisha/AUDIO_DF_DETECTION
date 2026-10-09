@@ -525,3 +525,59 @@ be fitting to the test set. The calibration premise itself stands (C04 / C07 poo
 0.962 vs floor 0.370 / 0.426) and is unsolved. What a third attempt would need, if made: a
 condition signal that recognises an unseen codec as unseen (the long-term spectrum does not),
 developed on a held-out codec family in dev, never on eval.
+
+### 2026-10-09 — DCF cost model was wrong; corrected. Single-system comparison with the literature.
+
+**Metric bug (affects every minDCF and actDCF above this entry).** `metrics/dcf.py` used a 0.05
+BONA FIDE prior with C_miss = C_fa = 1. The ASVspoof 5 track-1 cost model is spoof prior 0.05,
+C_miss = 1, C_fa = 10 (stated in arXiv:2501.05545, Appendix A; still to be confirmed against the
+evaluation plan). Defaults corrected, known-answer test added. Earlier minDCF / actDCF values are on
+a different scale and must not be compared with published ones. EER, Cllr, minCllr are unaffected.
+The calibration conclusions (block C rejected) rest on Cllr with paired CIs and stand; the actDCF
+columns of those entries are at the wrong operating point and have NOT been recomputed.
+
+**Eval, official cost model (scores unchanged; runs `frozen_*_final`, heads on 40% of train, one seed).**
+
+| system | EER | minDCF |
+| --- | --- | --- |
+| frozen WavLM-Large + head | 4.40% | **0.1227** (was reported as 0.255) |
+| frozen XLS-R-300M + head | 7.67% | 0.2161 (was 0.453) |
+
+WavLM per codec (EER / minDCF): clean 1.47 / 0.039, C05 1.85 / 0.047, C06 2.24 / 0.058,
+C11 2.37 / 0.061, C02 2.77 / 0.070, C01 2.93 / 0.075, C03 3.81 / 0.096, C09 4.44 / 0.111,
+C08 4.80 / 0.123, C10 5.71 / 0.138, **C04 8.20 / 0.220, C07 9.78 / 0.261**.
+
+**Published results, read from the papers (not from search summaries).**
+
+| system | type | EER | minDCF | source |
+| --- | --- | --- | --- | --- |
+| T45, challenge winner, open | 6-model ensemble | 2.59% | 0.0750 | arXiv:2408.08739 |
+| 4-model fusion | ensemble | 2.58% | – | arXiv:2501.05545, Table 12 |
+| XLS-R 128 + ResNet34, MaskedSpec + RawBoost | single, fine-tuned | **4.17%** | 0.119 | arXiv:2501.05545, Table A.13 |
+| own SSL pretraining on ASVspoof 5 + ResNet34 | single, closed | 5.44% | **0.117** | same table |
+| WavLM + ResNet34, MaskedSpec + codecs | single, fine-tuned | 4.77% | 0.132 | same table |
+| SZU-AFS D4 | 2-model fusion | 4.04% | 0.115 | arXiv:2408.09933 |
+| BUT, open primary | 3-model fusion | 9.28% | 0.2573 | BUT ASVspoof 5 paper |
+
+- Our frozen WavLM single model (4.40% / 0.123) is level with the best single systems I could
+  verify (4.17% / 0.117), without fine-tuning and with 40% of train. It is not SOTA overall: the
+  ensembles reach 2.6% / 0.075.
+- A search summary attributed "Wav2vec2 + MHFA, minDCF 0.0848, EER 3.30%" to the eval set. It is a
+  DEV result (BUT paper, Table 2). Not used.
+- Not checked: arXiv:2602.13596 (BreathNet) result tables; a better single system may exist.
+- Single-model target (the user will not use ensembles): EER < 4.17% and minDCF < 0.117 on eval.
+
+**Adversarial attacks in eval (arXiv:2408.08739, Table 2):** A18, A20, A23, A27, A30 (Malafide /
+Malacopula on A17, A12, A09, A26, A18), A31, A32 (Malacopula on A22, A25). Paired EER, base ->
+adversarial, XLS-R vs WavLM: A17->A18 1.6->7.2 vs 0.7->1.9; A18->A30 7.2->14.8 vs 1.9->3.0;
+A22->A31 2.7->17.1 vs 2.8->6.2; A26->A27 1.7->6.3 vs 1.1->2.2; A25->A32 1.6->4.4 vs 0.9->1.8.
+The adversarial filter multiplies XLS-R error 3-6x and WavLM error ~2x. Why is not established.
+
+**Head sweep (dev select only; clean / codec EER).** WavLM: seeds 1337, 1, 2 = 1.59 / 3.15,
+1.50 / 2.99, 1.63 / 3.30; dropout 0.5 = **1.13 / 2.76**; wd 0.1 + lr 3e-4 = 1.61 / 3.22.
+XLS-R: seeds = 0.82 / 2.69, 0.78 / 2.37, 0.78 / 2.45; dropout 0.5 = **0.44 / 2.36**; wd = 0.98 / 2.74.
+Dropout 0.5 is outside the three-seed range on clean for both backbones. Not yet scored on eval.
+
+**Infrastructure.** The EnCodec extraction (chain_encodec.sh) crashed on 2026-10-08 after 3 min
+(DataLoader worker exited). On 2026-10-09 the Windows WMI service hung: `platform.machine()` blocks,
+so `import pandas` blocks, so every script blocks. Unrelated to our code; needs a service restart.
