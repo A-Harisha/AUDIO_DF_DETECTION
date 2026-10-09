@@ -643,3 +643,31 @@ Neither head reaches the single-model target (EER < 4.17%, minDCF < 0.117).
 **EnCodec view:** on CPU in DataLoader workers, EnCodec took 7 min per batch of 24 and failed with
 "bad allocation" (cause of the 8 Oct crash is presumed the same; not confirmed). It now runs on the GPU
 in the main process; workers do only the MP3 step for the C07 simulation. Dev view: 47,400 clips in 2 h.
+
+## 2026-10-09 — EnCodec training view on eval
+
+**Claim tested:** eval C04 / C07 are hardest because the detector never saw a neural codec; simulating
+EnCodec in training lowers their EER. Runs `frozen_{wavlm,xlsr}_enc_drop50` (views clean + codec +
+encodec, selected on dev clean + codec + encodec, dropout 0.5, 40% of train, seed 1337). Controls:
+`frozen_{wavlm,xlsr}_drop50_final` (identical without the encodec view). Official cost model.
+
+| Eval (680,774 clips) | EER % | minDCF | C04 EER | C07 EER | clean EER |
+|---|---|---|---|---|---|
+| WavLM, control | 4.95 | 0.1399 | 9.29 | 11.28 | 1.48 |
+| WavLM, + encodec | 4.17 | 0.1144 | 6.60 | 7.77 | 1.60 |
+| XLS-R, control | 6.80 | 0.1970 | 14.35 | 17.30 | 2.47 |
+| XLS-R, + encodec | 5.97 | 0.1717 | 11.09 | 13.27 | 2.48 |
+
+Adversarial attacks, EER % (A18 / A20 / A23 / A27 / A30 / A31 / A32):
+- WavLM + encodec: 1.08 / 1.49 / 1.33 / 2.27 / 2.21 / 6.18 / 1.74
+- XLS-R + encodec: 3.70 / 3.83 / 3.01 / 6.63 / 7.66 / 10.05 / 5.03
+
+**Result:** claim supported for both backbones: C04 and C07 EER drop by 2.7-4.0 points, pooled EER by
+0.8 points. The other codecs and clean move by a few tenths in either direction (C02, C09 slightly worse).
+C04 / C07 are still the worst conditions, so the simulation closes only part of the gap (that ASVspoof 5
+used the public 24 kHz EnCodec model is still unverified).
+
+**Against the literature (verified single systems, arXiv:2501.05545 Table A.13: EER 4.17%, best
+minDCF 0.117):** WavLM + encodec has minDCF 0.1144 and EER equal to 4.17% at two decimals. This is a
+frozen backbone with a 0.26M-parameter head on 40% of train. Limits: one seed, no confidence interval,
+and the comparison with the dropout 0.2 control (4.40%) is confounded by the dropout change.
