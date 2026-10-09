@@ -717,3 +717,26 @@ ten epochs are flat (5.2-5.6), like the other seeds.
 view costs clean accuracy; on eval the cost is 0.2 points. One more dev / eval disagreement.
 **Not done (would be selection on eval):** rescoring eval with the last-epoch weights. The selection
 rule must be fixed on dev (last epoch or an average of the last epochs), then all seeds rerun.
+
+## 2026-10-09 — Weight averaging (EMA) against the noisy selection curve: rejected on dev
+
+**Claim tested:** validating and saving an EMA (decay 0.999 per step) of the head weights removes the
+selection noise and gives a better and more stable model. Runs `frozen_wavlm_enc_ema_seed{1337,1,2}`;
+controls `frozen_wavlm_enc`, `frozen_wavlm_enc_seed{1,2}` (identical without EMA). Dev only; eval was
+not scored. Held-out = dev `calib` split (not used for selection), EER % on clean / codec / encodec.
+
+| Seed | raw: best epoch, held-out mean | EMA: best epoch, held-out mean |
+|---|---|---|
+| 1337 | 19, 5.14 | 23, 5.57 |
+| 1 | 21, 5.38 | 25, 5.56 |
+| 2 | 1, 5.65 | 23, 5.88 |
+
+Mean epoch-to-epoch change of select EER, last 20 epochs: raw 0.15-0.33 points, EMA 0.04-0.06.
+
+**Result:** EMA does what it should mechanically (smooth curve, best epoch 23-25 on every seed) but the
+held-out dev EER is 0.2-0.4 points worse on all three seeds. The averaged model sits at the late-training
+weights, and those are worse on the unseen dev attacks than the raw model's best epochs: the head
+overfits the train attacks, and the "noise" partly is that drift. EMA is therefore not adopted and the
+code was not kept (patch not committed; `fit(..., ema=)` on `torch.Tensor.lerp_`, 20 lines).
+**Open:** the seed spread on eval (3.96-5.13%) stays unexplained by selection alone. The frozen head
+is at its limit for a stable result; the next lever is the backbone (LoRA fine-tune, full train set).
