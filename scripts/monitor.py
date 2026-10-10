@@ -2,9 +2,11 @@
 
     uv run python scripts/monitor.py            # refresh each 5 s; Ctrl+C stops the view only
 
-Claim served: none (observability). It shows, for the newest logs in experiments/logs_partial:
-the last progress lines, the per-epoch metrics of the newest run, and the GPU load.
-Standard library only, so it starts fast and cannot hang on the pandas import.
+Claim served: none (observability). For the newest logs in experiments/logs_partial it shows a
+progress bar, the last progress lines, the per-epoch metrics of the newest run, and the GPU load.
+Feature extraction reports clips done of total; training reports epochs; both reach 100% when the
+job writes its result. Standard library only, so it starts fast and cannot hang on the pandas
+import.
 """
 from __future__ import annotations
 
@@ -19,8 +21,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent / "experiments"
-KEEP = ("clips done", "epoch", "scored", "wrote", "Error", "shape |")
-BATCH = re.compile(r"batch (\d+) / (\d+)")
+KEEP = ("clips", "epoch", "scored", "wrote", "Error", "shape |")
+CLIPS = re.compile(r"clips (?:already )?done:? (\d+) / (\d+)")
+STEP = re.compile(r"epoch (\d+) step (\d+)/(\d+)")
+DONE = ("best epoch", "| wrote ")
 STAMP = "%Y-%m-%d %H:%M:%S"
 SPARK = "▁▂▃▄▅▆▇█"
 DIM, BOLD, RESET = "\x1b[2m", "\x1b[1m", "\x1b[0m"
@@ -60,6 +64,12 @@ def panel(title: str, rows: list[str], width: int, note: str = "") -> list[str]:
     return out
 
 
+def bar(fraction: float, cells: int = 24) -> str:
+    full = round(min(max(fraction, 0.0), 1.0) * cells)
+    colour = CYAN if full == cells else GREEN
+    return f"{colour}{'█' * full}{DIM}{'·' * (cells - full)}{RESET}"
+
+
 def sparkline(values: list[float]) -> str:
     lo, hi = min(values), max(values)
     span = hi - lo or 1.0
@@ -70,23 +80,56 @@ def clock(seconds: float) -> str:
     return f"{int(seconds) // 3600}h {int(seconds) % 3600 // 60:02d}m"
 
 
+def stamp(line: str) -> float:
+    return time.mktime(time.strptime(line[:19], STAMP))
+
+
+def marks(lines: list[str]) -> list[tuple[float, int, int]]:
+    """Every periodic ``clips done X / Y`` line as (when, done, total). Feature extraction only.
+
+    The ``clips already done`` line is a resume marker written at startup, not a periodic tick, so
+    it is excluded: counting it puts the log period at seconds and makes a live job look quiet."""
+    return [(stamp(ln), int(m[1]), int(m[2])) for ln in lines
+            if (m := CLIPS.search(ln)) and "already done" not in ln]
+
+
+def total_epochs(name: str) -> int | None:
+    """The configured epochs of the run this log belongs to, by matching name."""
+    path = ROOT / "runs_partial" / name / "config.json"
+    return json.loads(path.read_text(encoding="utf-8"))["experiment"]["epochs"] if path.exists() else None
+
+
+def progress(lines: list[str], name: str) -> tuple[float, str] | None:
+    """Fraction done and its label, from the newest progress line. None if the log shows neither."""
+    finished = any(key in ln for ln in lines[-40:] for key in DONE)
+    steps = [m for ln in lines if (m := STEP.search(ln))]
+    if steps:
+        epochs = total_epochs(name)
+        if epochs is None:
+            return None
+        epoch, step, of = int(steps[-1][1]), int(steps[-1][2]), int(steps[-1][3])
+        return (1.0 if finished else (epoch + step / of) / epochs), f"epoch {epoch + 1} of {epochs}"
+    if ticks := [m for ln in lines if (m := CLIPS.search(ln))]:
+        done, total = int(ticks[-1][1]), int(ticks[-1][2])
+        return (1.0 if finished else done / total), f"{done:,} of {total:,} clips"
+    return None
+
+
 def pace(lines: list[str], mtime: float) -> str:
-    """The span the log covers, and, while it is still live, the end clock its batch rate points to."""
+    """The span the log covers, and, while it is still live, the end clock its rate points to."""
     if not lines:
         return "no lines yet"
-    span = f"spans {clock(mtime - time.mktime(time.strptime(lines[0][:19], STAMP)))}"
-    marks = [(time.mktime(time.strptime(ln[:19], STAMP)), int(m[1]), int(m[2]))
-             for ln in lines if (m := BATCH.search(ln))]
-    if len(marks) < 2 or marks[-1][1] <= marks[0][1]:
+    span = f"spans {clock(mtime - stamp(lines[0]))}"
+    found = marks(lines)
+    if len(found) < 2 or found[-1][1] <= found[0][1]:
         return span
-    (first_at, first_batch, _), (last_at, last_batch, total) = marks[0], marks[-1]
-    done = f"{span}   {last_batch}/{total} batches"
-    gap = (last_at - first_at) / (len(marks) - 1)
+    (first_at, first_done, _), (last_at, last_done, total) = found[0], found[-1]
+    gap = (last_at - first_at) / (len(found) - 1)
     if time.time() - mtime > 2 * gap:
-        return f"{done}   quiet for more than two log periods, so no end estimate"
-    left = (total - last_batch) * (last_at - first_at) / (last_batch - first_batch)
+        return f"{span}   quiet for more than two log periods, so no end estimate"
+    left = (total - last_done) * (last_at - first_at) / (last_done - first_done)
     end = time.strftime("%H:%M", time.localtime(time.time() + left))
-    return f"{done}   {clock(left)} left   ends about {end}"
+    return f"{span}   {clock(left)} left   ends about {end}"
 
 
 def gpu_rows() -> list[str]:
@@ -96,9 +139,7 @@ def gpu_rows() -> list[str]:
     rows = []
     for line in text.splitlines():
         name, util, used, total, temp = (field.strip() for field in line.split(","))
-        full = round(int(util) / 5)
-        bar = f"{GREEN}{'█' * full}{DIM}{'·' * (20 - full)}{RESET}"
-        rows.append(f"{name.removeprefix('NVIDIA ')[:20]:<20}  {bar} {int(util):>3}%   "
+        rows.append(f"{name.removeprefix('NVIDIA ')[:20]:<20}  {bar(int(util) / 100, 20)} {int(util):>3}%   "
                     f"{int(used) / 1024:>5.1f}/{int(total) / 1024:.0f} GiB   {temp}°C")
     return rows
 
@@ -107,6 +148,8 @@ def log_rows(path: Path, n: int, width: int) -> list[str]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     kept = [ln[:width] for ln in lines if any(key in ln for key in KEEP)][-n:]
     rows = [f"{RED}{ln}{RESET}" if "Error" in ln else ln for ln in kept]
+    if (now := progress(lines, path.stem)) is not None:
+        rows = [f"{bar(now[0])} {100 * now[0]:>5.1f}%   {now[1]}", ""] + rows
     return rows + ["", f"{DIM}{pace(lines, path.stat().st_mtime)}{RESET}"]
 
 
