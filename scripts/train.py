@@ -103,7 +103,7 @@ def main(cfg: DictConfig) -> None:
 
     best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr, backbone_lr=exp.backbone_lr,
                weight_decay=exp.weight_decay, patience=exp.patience, cond_weight=exp.cond_weight,
-               device=cfg.device)
+               device=cfg.device, select_window=exp.select_window)
     best["layer_weights"] = torch.softmax(model.head.layer_logits, 0).tolist()
     write_json(run_dir / "best.json", best)
     log.info("best epoch %d | select EER %.4f", best["epoch"], best["select"])

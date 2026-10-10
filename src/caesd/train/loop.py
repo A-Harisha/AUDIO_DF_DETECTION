@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -82,9 +83,19 @@ def fit(
     patience: int,
     cond_weight: float,
     device: str = "cuda",
+    select_window: int = 3,
 ) -> dict:
-    """Train; after every epoch validate, append to ``metrics.jsonl`` and keep the best checkpoint
-    (lowest mean validation EER). Stops after ``patience`` epochs with no improvement."""
+    """Train; after every epoch validate, append to ``metrics.jsonl`` and keep the best checkpoint.
+
+    The epoch is chosen by the lowest ``select_window``-epoch mean of the validation EER, and the
+    weights kept are the middle epoch's own, not an average of them. The raw per-epoch curve moves
+    by +-0.5 points, so its argmin is the minimum of the noise: seed 2 of frozen_wavlm_enc selected
+    epoch 1, an undertrained head (docs/experiment_log.md, 2026-10-09). Averaging the weights
+    instead was tested as EMA and is worse on held-out dev, because late weights overfit the train
+    attacks. ``select_window=1`` restores the old rule. Stops after ``patience`` epochs with no
+    improvement."""
+    if epochs < select_window:
+        raise ValueError(f"epochs {epochs} is below select_window {select_window}: nothing could be selected")
     model.to(device)
     head = list(model.head.parameters())
     body = [p for p in model.backbone.parameters() if p.requires_grad] if model.backbone is not None else []
@@ -96,7 +107,8 @@ def fit(
     log.info("trainable params: head %.2fM, backbone %.2fM", sum(p.numel() for p in head) / 1e6,
              sum(p.numel() for p in body) / 1e6)
 
-    best = {"select": float("inf")}
+    best, best_mean = {"select": float("inf"), "epoch": 0}, float("inf")
+    recent: deque[tuple[dict, dict]] = deque(maxlen=select_window)
     for epoch in range(epochs):
         model.train()
         start, sums, steps = time.time(), {}, 0
@@ -123,9 +135,13 @@ def fit(
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(metrics) + "\n")
         log.info("epoch %d | %s", epoch, {k: round(v, 4) for k, v in metrics.items()})
-        if metrics["select"] < best["select"]:
-            best = metrics
-            torch.save(trainable_state(model), run_dir / "model.pt")
+        recent.append((metrics, trainable_state(model)))
+        window_mean = sum(m["select"] for m, _ in recent) / len(recent)
+        if len(recent) == select_window and window_mean < best_mean:
+            best_mean, (best, state) = window_mean, recent[select_window // 2]
+            best["select_window_mean"] = window_mean
+            torch.save(state, run_dir / "model.pt")
+            log.info("kept epoch %d | window mean %.4f", best["epoch"], window_mean)
         elif epoch - best["epoch"] >= patience:
             log.info("early stop: no improvement for %d epochs", patience)
             break

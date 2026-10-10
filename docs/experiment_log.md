@@ -740,3 +740,35 @@ overfits the train attacks, and the "noise" partly is that drift. EMA is therefo
 code was not kept (patch not committed; `fit(..., ema=)` on `torch.Tensor.lerp_`, 20 lines).
 **Open:** the seed spread on eval (3.96-5.13%) stays unexplained by selection alone. The frozen head
 is at its limit for a stable result; the next lever is the backbone (LoRA fine-tune, full train set).
+
+## 2026-10-10 — Smoothing the epoch-selection statistic: rejected on held-out dev
+
+**Claim tested:** the kept epoch is the argmin of a noisy per-epoch curve, so seed 2 of
+`frozen_wavlm_enc` selected epoch 1, an undertrained head. Choosing the epoch by the lowest
+3-epoch mean of the select EER, and keeping that middle epoch's own weights (not an average, which
+EMA already showed to be worse), should remove the selection noise. Runs `sel3_seed{1337,1,2}`:
+identical to `frozen_wavlm_enc_seed*` (WavLM, views clean + codec + encodec, dropout 0.2, 40% of
+train) except `experiment.select_window=3`. Held-out = dev `calib` split, never used for selection;
+EER % is the mean over clean / codec / encodec.
+
+| rule | seed 1337 | seed 1 | seed 2 | mean | spread |
+|---|---|---|---|---|---|
+| argmin (`select_window=1`) | 5.14 (ep 19) | 5.38 (ep 21) | 5.65 (ep 1) | 5.39 | 0.51 |
+| 3-epoch mean (`=3`) | 5.57 (ep 20) | 5.60 (ep 25) | 5.88 (ep 21) | 5.68 | 0.31 |
+| change | +0.43 | +0.22 | +0.23 | **+0.29** | -0.20 |
+
+**Result: rejected.** Worse on all three seeds, same sign each time. The window moves selection later
+(epochs 20 / 25 / 21 against 19 / 21 / 1) and late weights overfit the train attacks, which is the
+same mechanism that rejected EMA on 2026-10-09. The variance narrowed by 0.20 and the mean paid 0.29.
+Default returned to `select_window=1`; the code and its tests are kept and configurable.
+
+**What the experiment did establish, and it matters more.** Within seed 1337, consecutive epochs 19
+and 20 give held-out 5.14 and 5.57: **0.43 points one epoch apart, on a split selection never saw.**
+The epoch-to-epoch movement is therefore real model variance, not measurement noise on the select
+split. No selection rule can fix it, and the 1.17-point seed spread on eval (3.96-5.13) is not a
+selection artefact. The lever must reduce the variance itself: the full train set instead of 40%, a
+lower max learning rate so the end of the one-cycle schedule is quieter, or stronger regularisation.
+
+**Side result (weak, n = 3).** Under the argmin rule the held-out `calib` ranking 5.14 < 5.38 < 5.65
+matches the eval ranking 3.96 < 4.09 < 5.13 exactly. If that holds, `calib` is a model-selection
+signal that costs no eval scoring. Worth testing on the runs already scored. Not established.
