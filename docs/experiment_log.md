@@ -772,3 +772,36 @@ lower max learning rate so the end of the one-cycle schedule is quieter, or stro
 **Side result (weak, n = 3).** Under the argmin rule the held-out `calib` ranking 5.14 < 5.38 < 5.65
 matches the eval ranking 3.96 < 4.09 < 5.13 exactly. If that holds, `calib` is a model-selection
 signal that costs no eval scoring. Worth testing on the runs already scored. Not established.
+
+## 2026-10-10 — Lower max learning rate against the seed spread: rejected on held-out dev
+
+**Claim tested:** the one-cycle schedule still takes real steps late in training, so a lower max
+learning rate should quieten the end of the run, shrink the per-epoch movement and shrink the seed
+spread. Runs `lr3e4_seed{1337,1,2}`: identical to `frozen_wavlm_enc_seed*` (WavLM, views clean +
+codec + encodec, dropout 0.2, 40% of train, `select_window=1`) except `experiment.lr=3.0e-4`.
+Held-out = dev `calib` split; EER % is the mean over clean / codec / encodec.
+
+| lr | seed 1337 | seed 1 | seed 2 | mean | spread |
+|---|---|---|---|---|---|
+| 1e-3 (baseline) | 5.14 (ep 19) | 5.38 (ep 21) | 5.65 (ep 1) | 5.39 | 0.51 |
+| 3e-4 | 5.46 (ep 10) | 5.45 (ep 8) | 5.80 (ep 4) | 5.57 | 0.35 |
+| change | +0.32 | +0.07 | +0.15 | **+0.18** | -0.16 |
+
+**Result: rejected.** Worse on all three seeds. The selected epoch moves much earlier (10 / 8 / 4
+against 19 / 21 / 1): the lower rate reaches its minimum sooner and then drifts.
+
+**The pattern, now on three independent attempts.** EMA (2026-10-09), the 3-epoch selection window
+(this morning) and the lower learning rate all buy variance with error, at about the same rate:
+
+| intervention | held-out mean | seed spread |
+|---|---|---|
+| EMA weight averaging | +0.2 to +0.4 | curve much smoother |
+| 3-epoch selection window | +0.29 | -0.20 |
+| lr 1e-3 -> 3e-4 | +0.18 | -0.16 |
+
+Three levers, same trade, same sign. The 0.26M head on 40% of train sits on a bias-variance frontier
+and these knobs only slide along it. The variance is therefore not a tuning problem, and the
+remaining levers are data quantity and head capacity. Full-train extraction (clean + codec, WavLM,
+182,357 clips) started 13:26; dev stays at the partial 47,400 clips, hardlinked, so train is the
+only variable. The encodec view of full train (+6.8 h) is deliberately not extracted until the
+2-view result says whether more data shrinks the spread at all.
