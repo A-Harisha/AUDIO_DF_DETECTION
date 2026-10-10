@@ -80,8 +80,16 @@ def clock(seconds: float) -> str:
     return f"{int(seconds) // 3600}h {int(seconds) % 3600 // 60:02d}m"
 
 
-def stamp(line: str) -> float:
-    return time.mktime(time.strptime(line[:19], STAMP))
+def stamp(line: str) -> float | None:
+    """The line's timestamp, or None if it carries none.
+
+    This view races the writers it reads: a log just truncated by a shell redirect can be read
+    while the file is extended but not yet flushed, so its head is NUL bytes. A read-only monitor
+    must not die of that."""
+    try:
+        return time.mktime(time.strptime(line[:19], STAMP))
+    except ValueError:
+        return None
 
 
 def marks(lines: list[str]) -> list[tuple[float, int, int]]:
@@ -89,8 +97,8 @@ def marks(lines: list[str]) -> list[tuple[float, int, int]]:
 
     The ``clips already done`` line is a resume marker written at startup, not a periodic tick, so
     it is excluded: counting it puts the log period at seconds and makes a live job look quiet."""
-    return [(stamp(ln), int(m[1]), int(m[2])) for ln in lines
-            if (m := CLIPS.search(ln)) and "already done" not in ln]
+    return [(at, int(m[1]), int(m[2])) for ln in lines
+            if (m := CLIPS.search(ln)) and "already done" not in ln and (at := stamp(ln)) is not None]
 
 
 def total_epochs(name: str) -> int | None:
@@ -117,9 +125,10 @@ def progress(lines: list[str], name: str) -> tuple[float, str] | None:
 
 def pace(lines: list[str], mtime: float) -> str:
     """The span the log covers, and, while it is still live, the end clock its rate points to."""
-    if not lines:
-        return "no lines yet"
-    span = f"spans {clock(mtime - stamp(lines[0]))}"
+    started = next((at for ln in lines if (at := stamp(ln)) is not None), None)
+    if started is None:
+        return "no timestamped lines yet"
+    span = f"spans {clock(mtime - started)}"
     found = marks(lines)
     if len(found) < 2 or found[-1][1] <= found[0][1]:
         return span
