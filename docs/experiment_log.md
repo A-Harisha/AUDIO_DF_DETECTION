@@ -920,3 +920,57 @@ the next lever is member strength (LoRA on the full train set), not another comb
 **Side note on protocol.** `report` now prints `null_weight`, the mean weight the gate puts on its
 null anchor. On eval it sat at 0.31, i.e. the gate acted on most clips rather than falling back --
 so the rejection is a rejection of what it did, not of a gate that never fired.
+
+## 2026-10-13 — Fusion of frozen-backbone members saturates at 3.6%; the lever is member strength
+
+Three member sets, same protocol throughout (combiners fit on dev `calib`, compared on dev `select`,
+eval scored once). Eval EER % / minDCF, full 680,774-clip set, official cost model.
+
+| study | members | mean off-diag corr | best_single | mean | global_mix | logistic | gated |
+|---|---|---|---|---|---|---|---|
+| ens_bands | 4 bands | 0.813 | 4.06 / .1136 | **3.67 / .1021** | 3.70 / **.1011** | 3.83 / .1064 | 3.97 / .1071 |
+| ens_mixed | + full-stack head | 0.851 | 3.89 / .1061 | **3.61 / .1001** | 3.69 / .1017 | 3.75 / .1034 | 3.75 / .1037 |
+| ens_cross | + XLS-R member | 0.854 | 5.97 / .1717 | **3.60 / .1004** | 4.26 / .1190 | 4.39 / .1232 | 4.54 / .1279 |
+
+**Result 1: the plain mean wins every time, and the ensemble saturates.** Four bands give 3.67%.
+Adding the unbanded full-stack head gives 3.61%. Adding a whole second backbone (XLS-R, a member
+that cost its own 7-hour extraction) gives 3.60% -- within noise of doing nothing. Every learned
+combiner (logistic, global_mix, gated) is worse than the unweighted mean on every set, and the gap
+widens as members are added: on ens_cross the mean is 3.60% and the next best combiner is 4.26%.
+Fitting combiner weights on dev does not transfer to eval, which is this project's oldest pattern.
+
+**Result 2: band diversity is as valuable as a second backbone, and far cheaper.** Four banded WavLM
+heads (5 minutes each on cached features) reach 3.67%; adding XLS-R on top of the bands plus the
+full-stack head moves nothing. Cross-backbone correlation is 0.80-0.90, inside the band-to-band range
+of 0.59-0.94, so the second backbone brings no diversity the bands did not already have.
+
+**Result 3, and it is the strongest argument for the ensemble here: the mean removes the
+model-selection risk.** On ens_cross the member with the best dev `select` EER (0.0428,
+`frozen_xlsr_enc_drop50`) is the WORST on eval (5.97%). Picking a single model on dev would have cost
+2.37 points against the mean of the same six members (3.60%). Given how often dev and eval disagree in
+this log, that insurance is worth more than the 0.29-point accuracy gain.
+
+**Result 4: the gate is rejected on all three sets**, not only on the bands: 3.97, 3.75, 4.54 against
+the mean's 3.67, 3.61, 3.60. The cross-attack precondition itself passes (descriptor label probe fit
+on train A01-A08, tested on dev A09-A16: EER **0.456**, chance 0.50), so the rejection is not a
+leakage artefact -- the mechanism simply does not transfer from A09-A16 to A17-A32. Closed.
+
+**Where this leaves the SOTA target.** Ensemble SOTA is 2.59% / 0.0750 (T45, six models,
+arXiv:2408.08739). We are at 3.60% / 0.1001, which beats every verified single system (best 4.17% /
+0.119) and loses to the ensembles by 1.0 EER points. The arithmetic says why: T45's six fine-tuned
+members fuse from roughly 4% each down to 2.59%, a 35% relative gain, while our six frozen members
+fuse from 3.89% to 3.60%, a 7% gain. Their members are far more decorrelated because they differ in
+front end and are each fine-tuned; ours all share one frozen backbone and one time-mean pooling, and
+banding the layer weighting is the only decorrelation available inside that design.
+
+**Therefore the next lever is member STRENGTH and feature-path diversity, not another combiner.**
+In cost order:
+1. LoRA fine-tuned members on the full train set. Fine-tuning both strengthens a member and moves its
+   features, so it buys accuracy and decorrelation together. Cost: ~5 h training plus ~8-10 h to score
+   eval over raw audio, per member.
+2. A member with a genuinely different front end (raw-waveform or spectrogram, e.g. an AASIST-style
+   graph model). It shares no backbone with anything here, so it is the largest decorrelation
+   available; it is also small and trains from scratch in hours.
+3. Narrower bands (eight 3-layer bands, `scripts/chain_bands8.sh`, ~40 min). Cheapest, but the
+   saturation above makes a large gain unlikely; it is worth running as the control that says whether
+   more members of the same kind are exhausted.
