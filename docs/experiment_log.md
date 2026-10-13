@@ -861,3 +861,62 @@ WavLM's 25 outputs, seed 1337, everything else at default; control `fullenc_seed
 EER, the correlation matrix and the mean-fusion gain. (2) Build the condition gate only if correlation
 actually drops. (3) Then the adversarial harness (white-box PGD on the waveform, and black-box: transfer
 plus the Malafide / Malacopula attacks already in eval), reported separately.
+
+## 2026-10-13 — Layer-band members decorrelate and the ensemble wins; the condition gate is rejected on eval
+
+**Claim tested.** Member diversity, not the fusion rule, is what an ensemble needs here. Restricting
+each head to one band of backbone layers should decorrelate the members, and a combiner over them
+should then gain much more than the 0.15 points the near-duplicate runs gave this morning.
+
+Runs `band{0_7,7_13,13_19,19_25}`: WavLM, full train, views clean + codec + encodec, seed 1337,
+`experiment.band` the only change from `fullenc_seed1337` (3.89% / 0.1061). Study `ens_bands`:
+combiners fit on dev `calib`, compared on dev `select`, eval scored once.
+
+| member | dev select EER | eval EER | eval minDCF | layer mass |
+|---|---|---|---|---|
+| band0_7 | 0.1200 | 10.60% | 0.2987 | layers 0-6 |
+| band7_13 | **0.0549** | 4.06% | 0.1136 | layers 7-12 |
+| band13_19 | 0.0668 | 4.83% | 0.1302 | layers 13-18 |
+| band19_25 | 0.0770 | 6.71% | 0.1689 | layers 19-24 |
+
+**Diversity: achieved.** Pairwise eval correlation 0.59-0.94, mean off-diagonal **0.813**, against
+0.974-0.994 for the six unbanded WavLM runs. Layers 7-12 alone reach 4.06%, within 0.2 points of the
+whole 25-layer stack, so banding costs little where the evidence lives.
+
+**Eval, pooled over all conditions (n = 680,774). Paired bootstrap CI of the EER difference against
+best_single (= band7_13); negative means the combiner wins.**
+
+| combiner | EER | minDCF | d_EER vs best_single, CI95 |
+|---|---|---|---|
+| best_single (band7_13) | 4.06% | 0.1136 | — |
+| mean | **3.67%** | 0.1021 | [-0.0043, -0.0035] |
+| global_mix | 3.70% | **0.1011** | [-0.0040, -0.0033] |
+| logistic | 3.83% | 0.1064 | [-0.0027, -0.0018] |
+| gated | 3.97% | 0.1071 | [-0.0013, -0.0005] |
+
+**Result 1: the diversity claim holds.** Four banded members, three of which are individually worse
+than the control, combine to 3.67% / 0.1011 and beat the best single model in the project
+(`fullenc_seed1337`, 3.89% / 0.1061). The gain over the best member is 0.39 points with a CI that
+excludes zero, against 0.15 points (eval-selected, so an upper bound) for the near-duplicate members.
+**The weakest member is the most useful one**: band0_7 is 10.60% alone and correlates at 0.59-0.86,
+and dropping it makes the mean of the other three worse (4.10% against 3.66%).
+
+**Result 2: the condition gate is REJECTED on eval.** It is the best combiner on dev `select`
+(3.84% against 4.35% for logistic) and the worst ensemble on eval (3.97%, behind the plain mean's
+3.67%), worse than `mean` on 9 of 12 codecs. This was predictable and was predicted: the descriptor
+label probe fails within attacks (dev calib -> dev select EER **0.328**, chance 0.50) and passes
+across attacks (0.553), so the dev gate fit on A09-A16 and tested on A09-A16 is fitting an
+attack-specific spectral signature that does not exist in A17-A32 (2026-10-08 entry). The dev gated
+number is therefore not evidence for anything, and the eval number says the mechanism does not
+transfer. This is the third condition-dependent mechanism rejected in this project after block C's
+two attempts. **The combiner is a plain unweighted mean, or the global mixture if minDCF is the
+target.** The gate code and its tests are kept and are not used for headline results.
+
+**Still far from the target.** Ensemble SOTA is T45 at 2.59% / 0.0750 (arXiv:2408.08739, six models).
+3.67% / 0.1011 beats every verified single system but leaves 1.1 EER points. Every member here is a
+0.26M head on a FROZEN backbone, while the 4.17% single system and T45's members are fine-tuned, so
+the next lever is member strength (LoRA on the full train set), not another combiner.
+
+**Side note on protocol.** `report` now prints `null_weight`, the mean weight the gate puts on its
+null anchor. On eval it sat at 0.31, i.e. the gate acted on most clips rather than falling back --
+so the rejection is a rejection of what it did, not of a gate that never fired.
