@@ -20,9 +20,11 @@ reported separately, as decided on 2026-10-13:
 
 Attack set. A gradient attack needs the backbone in the loop, so the full 680,774-clip eval set is
 out of reach: the attacks run on a stratified subsample (``+n_per_cell`` clips per codec and class,
-plus every clip of the adversarial attacks up to the same cap), cropped to ``+attack_seconds``. The
-clean metrics of that subsample are reported beside the attacked ones, so the drop is read against
-the right baseline and never against the full-eval number.
+plus the adversarial attacks at a quarter of that cap), cropped to ``+attack_seconds``. The clean
+metrics of that subsample are reported beside the attacked ones, so the drop is read against the
+right baseline and never against the full-eval number. The crop also means these clean numbers do
+not equal the full-eval ones even for the same model: the cached-feature path pools over up to 16 s
+and this path over 4 s. NOT YET CHECKED: that the two paths agree in rank on the same clips.
 
 Reported per budget: EER, and the attacker's success rate at the threshold that the CLEAN subsample
 puts at 0.1% and 1% false-accept -- the rate at which a spoof clip crosses a fixed operating point
