@@ -6,6 +6,6 @@
 name: raw
 tag: raw_sinc
 channels: 128
-n_stages: 6
+n_stages: 5          # with the 10-sample hop the sequence is 10x shorter; a 6th stage pools to 4 frames
 n_filters: 70
 kernel_size: 129
