@@ -33,6 +33,11 @@ from torch import nn
 from ..utils.io import TARGET_SR
 
 
+def _conv_len(n: torch.Tensor, kernel: int, stride: int, padding: int) -> torch.Tensor:
+    """Output length of a conv or pool with these settings: floor((n + 2p - k) / s) + 1."""
+    return (torch.div(n + 2 * padding - kernel, stride, rounding_mode="floor") + 1).clamp(min=1)
+
+
 def mel_edges(n_filters: int, sample_rate: int, low_hz: float = 30.0) -> torch.Tensor:
     """``n_filters + 1`` band edges, equally spaced on the mel scale: the standard initialisation,
     so the filterbank starts with the resolution of a mel front end and learns away from it."""
@@ -47,11 +52,12 @@ class SincConv(nn.Module):
     """Band-pass filterbank. Only the two cutoffs per filter are learned, so the kernel stays a
     band-pass by construction instead of drifting into an arbitrary filter."""
 
-    def __init__(self, out_channels: int = 70, kernel_size: int = 129, sample_rate: int = TARGET_SR) -> None:
+    def __init__(self, out_channels: int = 70, kernel_size: int = 129, sample_rate: int = TARGET_SR,
+                 stride: int = 10) -> None:
         super().__init__()
         if kernel_size % 2 == 0:
             raise ValueError(f"kernel_size {kernel_size} must be odd: the filter is symmetric")
-        self.sample_rate, self.kernel_size = sample_rate, kernel_size
+        self.sample_rate, self.kernel_size, self.stride = sample_rate, kernel_size, stride
         edges = mel_edges(out_channels, sample_rate)
         self.low_hz = nn.Parameter(edges[:-1].clone())
         self.band_hz = nn.Parameter((edges[1:] - edges[:-1]).clone())
@@ -75,7 +81,11 @@ class SincConv(nn.Module):
         return (kernel / kernel.abs().amax(dim=-1, keepdim=True)).unsqueeze(1)
 
     def forward(self, wave: torch.Tensor) -> torch.Tensor:
-        return F.conv1d(wave.unsqueeze(1), self.filters(), padding=self.kernel_size // 2)
+        # A filterbank is computed at a frame rate, not at the sample rate: the hop cuts this layer
+        # and every stage after it by ``stride``. At 16 kHz, stride 10 is a 0.625 ms hop, well above
+        # the modulation rates a spoofing artefact lives at.
+        return F.conv1d(wave.unsqueeze(1), self.filters(), stride=self.stride,
+                        padding=self.kernel_size // 2)
 
 
 class ResBlock(nn.Module):
@@ -107,11 +117,13 @@ class RawFrontEnd(nn.Module):
     """``Backbone``-compatible: exposes ``n_layers`` and ``feature_dim`` and returns a pooled stack,
     so ``CaesdDetector``, ``Head`` and ``ScoreEnsemble`` take it with no change."""
 
-    def __init__(self, channels: int = 128, n_stages: int = 6, n_filters: int = 70,
-                 kernel_size: int = 129, pool: int = 3, sample_rate: int = TARGET_SR) -> None:
+    def __init__(self, channels: int = 128, n_stages: int = 5, n_filters: int = 70,
+                 kernel_size: int = 129, pool: int = 3, sample_rate: int = TARGET_SR,
+                 sinc_stride: int = 10, first_pool: int = 2) -> None:
         super().__init__()
-        self.sinc = SincConv(n_filters, kernel_size, sample_rate)
-        self.first_pool = nn.MaxPool1d(pool)
+        self.sinc = SincConv(n_filters, kernel_size, sample_rate, stride=sinc_stride)
+        self.first_pool = nn.MaxPool1d(first_pool)
+        self.sinc_stride, self.first_pool_size = sinc_stride, first_pool
         self.project = nn.Conv1d(n_filters, channels, 1)
         self.stages = nn.ModuleList([ResBlock(channels, pool) for _ in range(n_stages)])
         self.feature_dim = channels
@@ -126,8 +138,9 @@ class RawFrontEnd(nn.Module):
     def _pool_len(self, n: torch.Tensor) -> torch.Tensor:
         """Valid frames after one ``MaxPool1d(self.pool)``, by the layer's OWN formula. Using
         ``n // pool`` instead is off by one wherever the clip fills the tensor, and in the last
-        stage (about 29 frames for 4 s) one frame is 3% of the mean -- measured as a 4e-2 shift."""
-        return (torch.div(n - self.pool, self.pool, rounding_mode="floor") + 1).clamp(min=1)
+        stage (a few dozen frames) one frame is several percent of the mean -- measured as a 4e-2
+        shift before this was fixed."""
+        return _conv_len(n, self.pool, self.pool, 0)
 
     def forward(self, wave: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
         # Per-utterance normalisation over the valid samples, as for the SSL front ends.
@@ -138,7 +151,10 @@ class RawFrontEnd(nn.Module):
         x = (wave - mean) * mask / torch.sqrt(var + 1e-7)
 
         x = self.project(self.first_pool(self.sinc(x).abs()))  # |.| : the filterbank's envelope
-        frames = self._pool_len(lengths)
+        # Each layer's own output-length formula; see _pool_len.
+        frames = _conv_len(lengths, self.sinc.kernel_size, self.sinc_stride,
+                           self.sinc.kernel_size // 2)
+        frames = _conv_len(frames, self.first_pool_size, self.first_pool_size, 0)
         # ``project`` has a bias, so it maps the zero padding to that bias rather than to zero. Left
         # unmasked, the first stage's convolution reads it at the boundary and a clip's pooled vector
         # moves by 4e-2 depending on whether the batch had a longer clip in it.

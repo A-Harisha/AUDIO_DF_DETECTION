@@ -11,7 +11,8 @@
 # one pooled vector per stage so the existing Head takes it unchanged. It is NOT AASIST -- there is
 # no graph-attention stack -- and no result from it may be reported under that name.
 #
-# Sizing. Raw audio, so batch 64 not 512, and the whole model trains (backbone_lr is its real rate,
+# Sizing. The filterbank runs with a 10-sample hop (0.625 ms), not at the sample rate: without it
+# one epoch took over an hour. Raw audio, so batch 64 not 512, and the whole model trains (backbone_lr is its real rate,
 # 1e-3, not the 1e-5 meant for fine-tuning a pretrained backbone). 12 epochs over 182,357 clips.
 # Known limit of this first pass: the audio path's CodecAugment does not do the neural codecs, so
 # this member never sees an EnCodec view, which is exactly what helped the SSL members most on
@@ -23,7 +24,7 @@ L=experiments/logs_partial
 run() { name=$1; shift; echo "== $(date +%H:%M) start $name"; uv run python "$@" > $L/$name.log 2>&1; rc=$?; echo "== $(date +%H:%M) end $name (exit $rc)"; [ $rc -eq 0 ] || exit $rc; }
 
 run raw_seed1337 scripts/train.py $F backbone=raw experiment.name=raw_seed1337 seed=1337 \
-  experiment.features=false experiment.batch_size=64 experiment.epochs=12 \
+  experiment.features=false experiment.batch_size=64 experiment.epochs=15 \
   experiment.backbone_lr=1.0e-3 experiment.lr=1.0e-3 \
   "experiment.score_sets=[dev_clean,dev_codec,eval_clean]"
 
