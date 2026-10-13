@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 
 from caesd.data.augment import CodecAugment, RawBoost
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, FeatureLoader, collate, seed_worker
-from caesd.models import Backbone, CaesdDetector, Head
+from caesd.models import Backbone, CaesdDetector, Head, RawFrontEnd
 from caesd.train.loop import fit, predict
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
@@ -97,7 +97,14 @@ def main(cfg: DictConfig) -> None:
                                   collate_fn=collate, num_workers=cfg.data.num_workers, pin_memory=True,
                                   persistent_workers=True, worker_init_fn=seed_worker)
         val = {name: audio_set(cfg, name, split="select", n=exp.val_n) for name in ("dev_clean", "dev_codec")}
-        backbone = Backbone.from_pretrained(cfg.backbone.name, freeze=not exp.unfreeze, lora_rank=exp.lora_rank)
+        if cfg.backbone.name == "raw":
+            # Trained from scratch, so it uses experiment.backbone_lr: set that to a real rate
+            # (1e-3), not the 1e-5 meant for fine-tuning a pretrained backbone.
+            backbone = RawFrontEnd(channels=cfg.backbone.channels, n_stages=cfg.backbone.n_stages,
+                                   n_filters=cfg.backbone.n_filters, kernel_size=cfg.backbone.kernel_size)
+        else:
+            backbone = Backbone.from_pretrained(cfg.backbone.name, freeze=not exp.unfreeze,
+                                                lora_rank=exp.lora_rank)
         model = CaesdDetector(backbone, Head(backbone.n_layers, backbone.feature_dim, dropout=exp.dropout,
                                              n_channels=n_channels, band=band))
     log.info("train clips: %d | label %s | val sets: %s", len(train_meta),

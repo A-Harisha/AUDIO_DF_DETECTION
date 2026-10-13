@@ -1,0 +1,11 @@
+# A raw-waveform front end trained from scratch: learnable band-pass filterbank + residual CNN
+# stages, pooled per stage so the existing Head takes it unchanged. It is NOT AASIST (no graph
+# attention) and no result from it may be reported under that name.
+# It shares no weights, no pretraining and no pooling grid with the SSL members, which is the point:
+# a second SSL backbone added nothing to the ensemble (2026-10-13, 3.61% -> 3.60%).
+name: raw
+tag: raw_sinc
+channels: 128
+n_stages: 6
+n_filters: 70
+kernel_size: 129

@@ -7,6 +7,7 @@ from .block_c_hypernet import CalibrationHypernet, label_probe_eer
 from .block_d_conformal import MondrianConformalGate
 from .detector import CaesdDetector, Head
 from .film import FiLM
+from .raw_frontend import RawFrontEnd
 
 __all__ = [
     "Backbone",
@@ -16,6 +17,7 @@ __all__ = [
     "FiLM",
     "Head",
     "MondrianConformalGate",
+    "RawFrontEnd",
     "SparseAutoencoder",
     "label_probe_eer",
 ]
