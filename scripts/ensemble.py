@@ -1,27 +1,34 @@
 """Combine the scores of several detector runs into one ensemble, and report it against its best
 member on the evaluation set.
 
-    uv run python scripts/ensemble.py +study=ens_bands "+runs=[band0_7,band7_13,band13_19,band19_25]"
-    uv run python scripts/ensemble.py +study=ens_bands_plus "+runs=[...]" "+views=[clean,codec,encodec]"
+    uv run python scripts/ensemble.py +study=ens_bands "+runs=[band0_7,band7_13,band13_19,band19_25]" \
+        "+views=[clean,codec,encodec]"
 
-Claim served: member diversity, not the fusion rule, is what decides whether an ensemble beats the
+Claim served: member diversity, not the fusion rule, decides whether an ensemble beats the
 ASVspoof 5 ensemble SOTA (T45, 2.59% EER / 0.0750 minDCF, arXiv:2408.08739). Fusing the nine
 near-duplicate runs of 2026-10-13 gained 0.15 EER points at an eval-selected optimum; this script
-measures the correlation matrix that explains that, and the gain each combiner gets over the best
-single member once the members are built to differ.
+reports the correlation matrix that explains that, and what each combiner then wins once the
+members are built to differ.
 
-Discipline, the same as everywhere in this project:
-  dev ``calib``   fits the combiner (member scaling, logistic weights)
-  dev ``select``  chooses between combiners; it is unseen attacks A09-A16
+Discipline, as everywhere in this project:
+  dev ``calib``   fits the combiners; a speaker-disjoint quarter of it selects the gate's step
+  dev ``select``  chooses between combiners; it is the unseen attacks A09-A16
   eval            scored once, never used for a decision
 
 Combiners (member scores -> one score):
   best_single   the member with the lowest dev select EER; the number every ensemble must beat
-  mean          unweighted mean of the members' z-scores (scaling fit on calib)
-  logistic      logistic regression on the members' z-scores, fit on calib
+  mean          unweighted mean of the members' z-scores
+  logistic      logistic regression on the members' z-scores
+  global_mix    one condition-independent weighted mixture, fit on condition-balanced Cllr
+  gated         global_mix plus a condition-dependent shift read from the channel descriptor only
 
-Writes experiments/runs/<study>/: config.json, ensemble.json (correlations, per-combiner metrics
-per condition and per attack, paired bootstrap CIs against best_single), scores_<set>.parquet.
+``gated`` is reportable only while ``descriptor_label_probe_eer`` sits near 0.5: at that point the
+gate carries no class evidence of its own, so its gain is routing between members rather than a
+second detector hidden in the combiner. The probe is printed first and the number belongs in every
+table that quotes ``gated``.
+
+Writes experiments/runs/<study>/: config.json, ensemble.json, scores_dev_select.parquet,
+scores_eval_clean.parquet.
 """
 from __future__ import annotations
 
@@ -32,25 +39,28 @@ import numpy as np
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
-from caesd.eval import member_scores
+from caesd.data.manifests import assign_split_by
+from caesd.eval import descriptor, member_scores
 from caesd.metrics import compute_eer, min_dcf
+from caesd.models.gate import ConditionGate, label_probe_eer
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
 
 log = get_logger("caesd.ensemble")
-COMBINERS = ("best_single", "mean", "logistic")
+COMBINERS = ("best_single", "mean", "logistic", "global_mix", "gated")
 
 
-def fit_combiners(z_calib: np.ndarray, label: np.ndarray, member_eer: np.ndarray) -> dict:
-    """Fit every combiner on the dev ``calib`` rows. Returns one callable per combiner."""
-    from sklearn.linear_model import LogisticRegression
-
-    pick = int(np.argmin(member_eer))
-    lr = LogisticRegression(class_weight="balanced", C=1e6).fit(z_calib, label)
-    log.info("logistic weights %s bias %.3f", np.round(lr.coef_[0], 3).tolist(), float(lr.intercept_[0]))
-    log.info("best_single is member %d (dev select EER %.4f)", pick, member_eer[pick])
-    return {"best_single": lambda z: z[:, pick], "mean": lambda z: z.mean(axis=1),
-            "logistic": lambda z: lr.decision_function(z)}
+def read_set(cfg: DictConfig, runs: list[str], name: str, meta_columns: list[str]
+             ) -> tuple[pd.DataFrame, np.ndarray]:
+    """Aligned member scores and metadata of one score set, with the channel descriptor joined on
+    ``utt``. The join is validated one-to-one: a partial descriptor cache would otherwise silently
+    drop clips from the ensemble but not from the baseline."""
+    meta, raw = member_scores(Path(cfg.paths.runs), runs, name, meta_columns)
+    desc = descriptor(Path(cfg.paths.features), name)
+    merged = meta.assign(_row=np.arange(len(meta))).merge(desc, on="utt", how="inner", validate="one_to_one")
+    if len(merged) != len(meta):
+        raise RuntimeError(f"{name}: {len(meta)} scored clips, {len(merged)} with a descriptor")
+    return merged.drop(columns="_row"), raw[merged["_row"].to_numpy()]
 
 
 def paired_ci(metric, a: np.ndarray, b: np.ndarray, label: np.ndarray, n: int, seed: int) -> list[float]:
@@ -65,14 +75,14 @@ def paired_ci(metric, a: np.ndarray, b: np.ndarray, label: np.ndarray, n: int, s
 
 
 def report(frame: pd.DataFrame, group: str, n_boot: int, seed: int) -> dict:
-    """EER and minDCF of every combiner per level of ``group``, plus the paired difference against
-    best_single with a 95% CI."""
+    """EER and minDCF of every combiner per level of ``group``, plus each one's paired difference
+    against best_single with a 95% CI."""
     rows = {}
     for key, sub in frame.groupby(group):
         y = sub["label"].to_numpy()
         if np.unique(y).size < 2:
             continue
-        row: dict = {"n": len(sub)}
+        row: dict = {"n": len(sub), "null_weight": float(sub["null_weight"].mean())}
         for c in COMBINERS:
             s = sub[c].to_numpy()
             row[f"eer/{c}"], row[f"min_dcf/{c}"] = compute_eer(s, y)[0], min_dcf(s, y)
@@ -81,10 +91,10 @@ def report(frame: pd.DataFrame, group: str, n_boot: int, seed: int) -> dict:
                 row[f"{name}/{c}-best_single/ci95"] = paired_ci(
                     metric, sub[c].to_numpy(), sub["best_single"].to_numpy(), y, n_boot, seed)
         rows[str(key)] = row
-        log.info("%-10s n=%7d | EER %s | minDCF %s | d_EER(mean) CI [%+.4f, %+.4f]", key, row["n"],
-                 " ".join(f"{row[f'eer/{c}']:.4f}" for c in COMBINERS),
+        log.info("%-10s n=%7d | EER %s | minDCF %s | d_EER(gated) CI [%+.4f, %+.4f] | null_w %.2f",
+                 key, row["n"], " ".join(f"{row[f'eer/{c}']:.4f}" for c in COMBINERS),
                  " ".join(f"{row[f'min_dcf/{c}']:.4f}" for c in COMBINERS),
-                 *row["eer/mean-best_single/ci95"])
+                 *row["eer/gated-best_single/ci95"], row["null_weight"])
     return rows
 
 
@@ -97,64 +107,98 @@ def main(cfg: DictConfig) -> None:
     write_json(out_dir / "config.json", resolved)
     set_seed(cfg.seed)
     runs, views = list(cfg.runs), list(cfg.get("views", ["clean", "codec"]))
-    n_boot, runs_dir = cfg.get("n_boot", 200), Path(cfg.paths.runs)
+    n_boot, n_anchors, steps = cfg.get("n_boot", 200), cfg.get("n_anchors", 8), cfg.get("gate_steps", 2000)
 
-    # --- dev: the fit and selection data, one row block per view ---
-    dev_meta, dev_raw = [], []
-    for view in views:
-        meta, s = member_scores(runs_dir, runs, f"dev_{view}", ["utt", "label", "split", "speaker", "generator"])
-        dev_meta.append(meta.assign(view=view))
-        dev_raw.append(s)
-    dev_meta, dev_raw = pd.concat(dev_meta, ignore_index=True), np.concatenate(dev_raw)
-    calib = (dev_meta["split"] == "calib").to_numpy()
-    y_dev = dev_meta["label"].to_numpy()
+    # --- dev: one row block per view, the fit and selection data ---
+    blocks = [read_set(cfg, runs, f"dev_{v}", ["utt", "label", "split", "speaker", "generator"]) for v in views]
+    dev = pd.concat([b[0].assign(view=v) for b, v in zip(blocks, views, strict=True)], ignore_index=True)
+    dev_raw = np.concatenate([b[1] for b in blocks])
+    dev["group"] = dev["sim_codec"]  # the simulated condition each clip was scored in
+    calib = (dev["split"] == "calib").to_numpy()
+    y_dev = dev["label"].to_numpy()
 
     # Members differ in score scale, so every combiner reads z-scores standardised on calib only.
     mu, sd = dev_raw[calib].mean(0), dev_raw[calib].std(0).clip(1e-6)
     dev_z = (dev_raw - mu) / sd
     select = ~calib
     member_eer = np.array([compute_eer(dev_z[select, j], y_dev[select])[0] for j in range(len(runs))])
-    log.info("dev: calib %d, select %d, views %s", calib.sum(), select.sum(), views)
     for run, eer in zip(runs, member_eer, strict=True):
         log.info("member %-16s dev select EER %.4f", run, eer)
 
-    combiners = fit_combiners(dev_z[calib], y_dev[calib], member_eer)
-    results: dict = {"runs": runs, "views": views, "scale": {"mean": mu.tolist(), "std": sd.tolist()},
-                     "member_dev_select_eer": dict(zip(runs, member_eer.tolist(), strict=True))}
+    # The gate selects its step on speakers it did not fit on: block C overfit a fixed step count
+    # on all of the calibration data (docs/experiment_log.md, 2026-10-07).
+    stop = np.zeros(len(dev), dtype=bool)
+    buckets = assign_split_by(dev.loc[calib, ["speaker"]], "speaker", (0.75, 0.25, 0.0), cfg.seed + 1)
+    stop[calib] = (buckets["split"] == "dev").to_numpy()
+    log.info("dev: calib %d (fit %d / stop %d), select %d | views %s",
+             calib.sum(), (calib & ~stop).sum(), stop.sum(), select.sum(), views)
+
+    # --- the PRECONDITION for the gate: the descriptor must not predict the class ---
+    z_dev = np.stack(dev["z"])
+    probe = label_probe_eer(z_dev[calib], y_dev[calib], z_dev[select], y_dev[select])
+    log.info("PRECONDITION | label probe on the descriptor alone: dev select EER %.4f (must be ~0.5; "
+             "below that the gate carries class evidence and no gated number holds)", probe)
+
+    # --- fit every combiner on calib ---
+    from sklearn.linear_model import LogisticRegression
+
+    pick = int(np.argmin(member_eer))
+    logistic = LogisticRegression(class_weight="balanced", C=1e6).fit(dev_z[calib], y_dev[calib])
+    gate = ConditionGate(z_dev.shape[1], len(runs), n_anchors=n_anchors)
+    info = gate.fit(dev_z[calib], z_dev[calib], y_dev[calib], dev.loc[calib, "group"].to_numpy(),
+                    stop[calib], steps=steps, seed=cfg.seed)
+    log.info("best_single is %s | logistic weights %s | gate step %d/%d, holdout Cllr %.4f, "
+             "global mixture %s", runs[pick], np.round(logistic.coef_[0], 3).tolist(),
+             info["best_step"], info["steps"], info["best_holdout_cllr"], np.round(info["global_weights"], 3).tolist())
+
+    def combine(z: np.ndarray, zz: np.ndarray) -> dict[str, np.ndarray]:
+        gated = gate.transform(z, zz)
+        return {"best_single": z[:, pick], "mean": z.mean(axis=1),
+                "logistic": logistic.decision_function(z), "global_mix": gated["global"],
+                "gated": gated["gated"], "null_weight": gated["null_weight"]}
+
+    results: dict = {"runs": runs, "views": views, "best_single": runs[pick],
+                     "descriptor_label_probe_eer": probe,
+                     "member_dev_select_eer": dict(zip(runs, member_eer.tolist(), strict=True)),
+                     "gate": {k: v for k, v in info.items() if k != "curve"},
+                     "logistic_weights": logistic.coef_[0].tolist(),
+                     "scale": {"mean": mu.tolist(), "std": sd.tolist()}}
 
     # --- the diagnosis: how much do the members actually differ? ---
     for part, z in (("dev_select", dev_z[select]), ):
         corr = np.corrcoef(z.T)
-        results[f"correlation_{part}"] = {"runs": runs, "matrix": np.round(corr, 4).tolist(),
-                                          "mean_offdiag": float((corr.sum() - len(runs)) / (len(runs) ** 2 - len(runs)))}
-        log.info("%s member correlation: mean off-diagonal %.3f\n%s", part,
-                 results[f"correlation_{part}"]["mean_offdiag"],
+        off = float((corr.sum() - len(runs)) / (len(runs) ** 2 - len(runs)))
+        results[f"correlation_{part}"] = {"runs": runs, "matrix": np.round(corr, 4).tolist(), "mean_offdiag": off}
+        log.info("%s member correlation: mean off-diagonal %.3f\n%s", part, off,
                  pd.DataFrame(np.round(corr, 3), index=runs, columns=range(len(runs))).to_string())
 
     # --- dev select: the only place a combiner may be chosen ---
-    dev_out = dev_meta.assign(**{c: f(dev_z) for c, f in combiners.items()})
+    dev_out = dev.drop(columns="z").assign(**combine(dev_z, z_dev))
     results["dev_select"] = report(dev_out[select].assign(all="all"), "all", n_boot, cfg.seed)["all"]
     results["dev_select_per_view"] = report(dev_out[select], "view", n_boot, cfg.seed)
     dev_out[select].to_parquet(out_dir / "scores_dev_select.parquet")
 
     # --- eval: scored once, reported pooled, per real codec and per attack ---
-    ev_meta, ev_raw = member_scores(runs_dir, runs, "eval_clean", ["utt", "label", "codec", "generator"])
-    ev_out = ev_meta.assign(**{c: f((ev_raw - mu) / sd) for c, f in combiners.items()})
-    corr = np.corrcoef(((ev_raw - mu) / sd).T)
+    ev, ev_raw = read_set(cfg, runs, "eval_clean", ["utt", "label", "codec", "generator"])
+    ev_z = (ev_raw - mu) / sd
+    ev_out = ev.drop(columns="z").assign(**combine(ev_z, np.stack(ev["z"])))
+    corr = np.corrcoef(ev_z.T)
     results["correlation_eval"] = {"runs": runs, "matrix": np.round(corr, 4).tolist(),
                                    "mean_offdiag": float((corr.sum() - len(runs)) / (len(runs) ** 2 - len(runs)))}
     log.info("eval member correlation: mean off-diagonal %.3f", results["correlation_eval"]["mean_offdiag"])
-    log.info("== eval, pooled (the benchmark numbers; SOTA to beat: 2.59%% EER / 0.0750 minDCF)")
+    log.info("== eval, pooled | combiners %s | SOTA to beat: 2.59%% EER / 0.0750 minDCF", COMBINERS)
     results["eval_pooled"] = report(ev_out.assign(all="all"), "all", n_boot, cfg.seed)["all"]
-    log.info("== eval, per real codec")
+    log.info("== eval, per real codec (C04 and C07 are the neural ones, C11 is devices)")
     results["eval_per_codec"] = report(ev_out, "codec", n_boot, cfg.seed)
+
     log.info("== eval, per attack (A18, A20, A23, A27, A30, A31, A32 are the adversarial ones)")
     bona = ev_out["label"].to_numpy() == 1
     per_attack = {}
     for attack in sorted(ev_out.loc[~bona, "generator"].unique()):
         sub = ev_out[bona | (ev_out["generator"] == attack).to_numpy()]
-        per_attack[str(attack)] = {"n": len(sub), **{f"eer/{c}": compute_eer(sub[c].to_numpy(), sub["label"].to_numpy())[0]
-                                                     for c in COMBINERS}}
+        y = sub["label"].to_numpy()
+        per_attack[str(attack)] = {"n": len(sub),
+                                   **{f"eer/{c}": compute_eer(sub[c].to_numpy(), y)[0] for c in COMBINERS}}
         log.info("%-5s n=%7d | EER %s", attack, len(sub),
                  " ".join(f"{per_attack[str(attack)][f'eer/{c}']:.4f}" for c in COMBINERS))
     results["eval_per_attack"] = per_attack

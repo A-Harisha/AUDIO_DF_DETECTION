@@ -42,6 +42,7 @@ from caesd.calibration import LogisticCalibrator, LookupTableCalibrator
 from caesd.data.condition_grid import EVAL_CODEC
 from caesd.data.datasets import CODEC_NAMES
 from caesd.data.manifests import assign_split_by
+from caesd.eval import descriptor as read_descriptor
 from caesd.metrics import act_dcf, cllr, compute_eer, min_cllr, min_dcf
 from caesd.models import CalibrationHypernet, label_probe_eer
 from caesd.utils.logging import get_logger, log_hparams, write_json
@@ -52,19 +53,8 @@ METHODS = ("global_clean", "global_pooled", "lookup_oracle", "lookup_pred", "hyp
 
 
 def descriptor(cfg: DictConfig, name: str) -> pd.DataFrame:
-    """``utt``, ``sim_codec`` and the cached channel descriptor ``z`` of set ``name``. Block C and
-    the lookup_pred baseline read only this: it never sees the SSL features the detector uses,
-    which is what made v1's condition vector leak class evidence. Joined on ``utt``, so nothing
-    assumes an order shared between the score files and the feature cache."""
-    path = Path(cfg.paths.features) / "descriptor" / name
-    if not path.with_suffix(".parquet").exists():
-        partition, view = name.split("_", 1)
-        raise FileNotFoundError(
-            f"{path}.parquet missing: run scripts/extract_features.py "
-            f"+partition={partition} +view={view} +descriptor_only=true")
-    meta = pd.read_parquet(path.with_suffix(".parquet"), columns=["utt", "sim_codec"])
-    meta["z"] = list(np.load(path.with_suffix(".npy")))
-    return meta
+    """The cached channel descriptor of set ``name``. Body shared with the ensemble study."""
+    return read_descriptor(Path(cfg.paths.features), name)
 
 
 def codec_classifier(z: np.ndarray, channel: np.ndarray, exclude: int | None) -> np.ndarray:

@@ -43,3 +43,20 @@ def calib_scale(runs_dir: Path, runs: list[str], views: list[str]) -> tuple[np.n
     if keep.sum() < 100 * len(runs):
         raise RuntimeError(f"only {keep.sum()} calib rows for {len(runs)} members: scale would be noise")
     return raw[keep].mean(0), raw[keep].std(0).clip(1e-6)
+
+
+def descriptor(features_dir: Path, name: str) -> pd.DataFrame:
+    """``utt``, ``sim_codec`` and the cached channel descriptor ``z`` of score set ``name``.
+
+    The gate and the lookup baselines read only this. It is computed from the waveform and never
+    from the SSL features the members use, which is what keeps the gate class-blind; joining on
+    ``utt`` means nothing assumes an order shared with the score files."""
+    path = features_dir / "descriptor" / name
+    if not path.with_suffix(".parquet").exists():
+        partition, view = name.split("_", 1)
+        raise FileNotFoundError(
+            f"{path}.parquet missing: run scripts/extract_features.py "
+            f"+partition={partition} +view={view} +descriptor_only=true")
+    meta = pd.read_parquet(path.with_suffix(".parquet"), columns=["utt", "sim_codec"])
+    meta["z"] = list(np.load(path.with_suffix(".npy")))
+    return meta
