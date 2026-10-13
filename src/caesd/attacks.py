@@ -1,0 +1,112 @@
+"""Adversarial attacks on a waveform detector, white-box and black-box.
+
+Threat model, stated once and reported separately for the two halves (user decision, 2026-10-13):
+
+  white-box  the attacker has the weights and the gradient of the exact system under test,
+             including the combiner weights of an ensemble. PGD and, where the system is
+             stochastic, PGD with expectation over the randomness (EOT). This is the number a
+             robustness claim must quote; anything weaker overstates the defence.
+  black-box  the attacker has scores but no gradient: SPSA with a query budget, and transfer of a
+             perturbation crafted on a surrogate model. The deployment number.
+
+Convention follows ``caesd.metrics``: a higher score means BONA FIDE. The attacker's goal on a
+spoof clip is therefore to RAISE the score, and on a bona fide clip to lower it; ``goal`` is +1 and
+-1 for those two directions, so one function serves both.
+
+Budget. An L-infinity budget in waveform amplitude is reported because it is standard, and an L2
+budget set by a target SNR is reported because it is what an audio attacker actually controls:
+    ||delta||_2 = ||x||_2 * 10 ** (-snr_db / 20).
+Both are projected per clip over the valid samples only, so zero padding is never perturbed -- a
+perturbation written into the padding would be free and would inflate the attack.
+
+Nothing here falls back: an attack that cannot reach its budget raises rather than returning a
+weaker perturbation under the same name.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import torch
+
+ScoreFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+
+def _mask(wave: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+    return (torch.arange(wave.shape[1], device=wave.device)[None] < lengths[:, None]).to(wave.dtype)
+
+
+def l2_budget(wave: torch.Tensor, lengths: torch.Tensor, snr_db: float) -> torch.Tensor:
+    """Per-clip L2 norm of a perturbation at ``snr_db`` relative to the clip. [B, 1]"""
+    signal = ((wave * _mask(wave, lengths)) ** 2).sum(1, keepdim=True).sqrt()
+    return signal * 10.0 ** (-snr_db / 20.0)
+
+
+def project(delta: torch.Tensor, mask: torch.Tensor, norm: str, budget: torch.Tensor) -> torch.Tensor:
+    """Project ``delta`` onto the budget ball and onto the valid samples."""
+    delta = delta * mask
+    if norm == "linf":
+        return delta.clamp(-budget, budget)
+    if norm == "l2":
+        scale = (budget / delta.norm(dim=1, keepdim=True).clamp_min(1e-12)).clamp(max=1.0)
+        return delta * scale
+    raise ValueError(f"unknown norm {norm!r}: use 'linf' or 'l2'")
+
+
+def pgd(score_fn: ScoreFn, wave: torch.Tensor, lengths: torch.Tensor, goal: int, budget: torch.Tensor,
+        norm: str = "l2", steps: int = 30, step_frac: float = 0.15, eot: int = 1) -> torch.Tensor:
+    """White-box PGD. Returns the attacked waveform.
+
+    ``score_fn(wave, lengths) -> score [B]`` must be differentiable in ``wave``. ``goal`` is +1 to
+    raise the score (spoof -> bona fide) and -1 to lower it. ``budget`` is per clip [B, 1], in
+    amplitude for ``linf`` and in L2 norm for ``l2``. ``eot`` averages the gradient over that many
+    forward passes, which is what a stochastic defence must be attacked with: one pass would
+    measure the randomness, not the robustness.
+    """
+    if eot < 1 or steps < 1:
+        raise ValueError(f"steps {steps} and eot {eot} must both be >= 1")
+    mask = _mask(wave, lengths)
+    delta = torch.zeros_like(wave, requires_grad=True)
+    alpha = step_frac * budget
+    for _ in range(steps):
+        grad = torch.zeros_like(wave)
+        for _ in range(eot):
+            score = score_fn(wave + delta, lengths)
+            grad = grad + torch.autograd.grad(score.sum(), delta)[0]
+        grad = grad / eot
+        with torch.no_grad():
+            direction = grad.sign() if norm == "linf" else grad / grad.norm(dim=1, keepdim=True).clamp_min(1e-12)
+            stepped = delta + goal * alpha * direction
+            delta.copy_(project(stepped, mask, norm, budget))
+    return (wave + delta).detach()
+
+
+@torch.no_grad()
+def spsa(score_fn: ScoreFn, wave: torch.Tensor, lengths: torch.Tensor, goal: int, budget: torch.Tensor,
+         norm: str = "l2", steps: int = 30, step_frac: float = 0.15, n_samples: int = 8,
+         sigma: float = 1e-3) -> tuple[torch.Tensor, int]:
+    """Black-box SPSA: the gradient is estimated from score differences only, never read.
+
+    Returns the attacked waveform and the number of score queries per clip, so the result is always
+    reported with its query budget: ``steps * 2 * n_samples``."""
+    mask = _mask(wave, lengths)
+    delta = torch.zeros_like(wave)
+    alpha = step_frac * budget
+    for _ in range(steps):
+        grad = torch.zeros_like(wave)
+        for _ in range(n_samples):
+            v = torch.randint(0, 2, wave.shape, device=wave.device, dtype=wave.dtype).mul_(2).sub_(1) * mask
+            plus = score_fn(wave + delta + sigma * v, lengths)
+            minus = score_fn(wave + delta - sigma * v, lengths)
+            grad = grad + ((plus - minus) / (2 * sigma))[:, None] * v
+        grad = grad / n_samples
+        direction = grad.sign() if norm == "linf" else grad / grad.norm(dim=1, keepdim=True).clamp_min(1e-12)
+        delta = project(delta + goal * alpha * direction, mask, norm, budget)
+    return wave + delta, steps * 2 * n_samples
+
+
+def snr_db(clean: torch.Tensor, attacked: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+    """Realised SNR per clip, in dB. Reported with every attack so the budget is never assumed."""
+    mask = _mask(clean, lengths)
+    signal = ((clean * mask) ** 2).sum(1)
+    noise = (((attacked - clean) * mask) ** 2).sum(1)
+    return 10.0 * torch.log10(signal / noise.clamp_min(1e-20))
