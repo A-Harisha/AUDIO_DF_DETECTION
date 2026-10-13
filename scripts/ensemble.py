@@ -22,10 +22,16 @@ Combiners (member scores -> one score):
   global_mix    one condition-independent weighted mixture, fit on condition-balanced Cllr
   gated         global_mix plus a condition-dependent shift read from the channel descriptor only
 
-``gated`` is reportable only while ``descriptor_label_probe_eer`` sits near 0.5: at that point the
-gate carries no class evidence of its own, so its gain is routing between members rather than a
-second detector hidden in the combiner. The probe is printed first and the number belongs in every
-table that quotes ``gated``.
+``gated`` is reportable only where the descriptor is label-free, and that is NOT everywhere. The
+long-term average spectrum carries an ATTACK-SPECIFIC signature: a probe on the descriptor alone
+recovers the class when it is fit and tested on the same attacks (dev calib -> dev select, EER
+0.26-0.33) and gets nothing across attacks (train A01-A08 -> dev A09-A16, EER 0.55)
+(docs/experiment_log.md, 2026-10-08). Both probes are therefore reported:
+  within_attack  fit dev calib, test dev select. EXPECTED TO FAIL. It is why the dev ``gated``
+                 numbers below are structurally unusable and must not be quoted as support.
+  cross_attack   fit train A01-A08, test dev select A09-A16. This is the protocol the gate actually
+                 runs under on eval -- fit on dev A09-A16, applied to eval A17-A32 -- so it is the
+                 precondition for every gated EVAL number, and it belongs in any table quoting one.
 
 Writes experiments/runs/<study>/: config.json, ensemble.json, scores_dev_select.parquet,
 scores_eval_clean.parquet.
@@ -133,11 +139,20 @@ def main(cfg: DictConfig) -> None:
     log.info("dev: calib %d (fit %d / stop %d), select %d | views %s",
              calib.sum(), (calib & ~stop).sum(), stop.sum(), select.sum(), views)
 
-    # --- the PRECONDITION for the gate: the descriptor must not predict the class ---
+    # --- the PRECONDITION for the gate, under both protocols (see the module docstring) ---
     z_dev = np.stack(dev["z"])
-    probe = label_probe_eer(z_dev[calib], y_dev[calib], z_dev[select], y_dev[select])
-    log.info("PRECONDITION | label probe on the descriptor alone: dev select EER %.4f (must be ~0.5; "
-             "below that the gate carries class evidence and no gated number holds)", probe)
+    probe_within = label_probe_eer(z_dev[calib], y_dev[calib], z_dev[select], y_dev[select])
+    train_desc = pd.concat([descriptor(Path(cfg.paths.features), f"train_{v}") for v in views],
+                           ignore_index=True)
+    train_label = pd.read_parquet(Path(cfg.paths.manifests) / "train.parquet", columns=["utt", "label"])
+    train_desc = train_desc.merge(train_label, on="utt", how="inner", validate="many_to_one")
+    probe_cross = label_probe_eer(np.stack(train_desc["z"]), train_desc["label"].to_numpy(),
+                                  z_dev[select], y_dev[select])
+    del train_desc
+    log.info("PRECONDITION | descriptor label probe | within-attack (calib -> select) EER %.4f "
+             "(expected to FAIL: the dev gated numbers are unusable) | cross-attack (train -> select) "
+             "EER %.4f (must be ~0.5; it is the precondition for the gated EVAL numbers)",
+             probe_within, probe_cross)
 
     # --- fit every combiner on calib ---
     from sklearn.linear_model import LogisticRegression
@@ -158,7 +173,8 @@ def main(cfg: DictConfig) -> None:
                 "gated": gated["gated"], "null_weight": gated["null_weight"]}
 
     results: dict = {"runs": runs, "views": views, "best_single": runs[pick],
-                     "descriptor_label_probe_eer": probe,
+                     "descriptor_label_probe_eer": {"within_attack": probe_within,
+                                                    "cross_attack": probe_cross},
                      "member_dev_select_eer": dict(zip(runs, member_eer.tolist(), strict=True)),
                      "gate": {k: v for k, v in info.items() if k != "curve"},
                      "logistic_weights": logistic.coef_[0].tolist(),

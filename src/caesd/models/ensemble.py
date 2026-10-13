@@ -38,7 +38,9 @@ def load_member(run_dir: Path, backbone: Backbone, device: str) -> tuple[Head, d
         raise NotImplementedError(f"{run_dir.name} uses block A/FiLM; the ensemble path does not")
     band = None if exp.get("band") is None else tuple(exp["band"])
     head = Head(backbone.n_layers, backbone.feature_dim, dropout=exp["dropout"], band=band)
-    load_trainable_state(head, torch.load(run_dir / "model.pt", map_location="cpu"))
+    # The checkpoint was saved from the whole CaesdDetector, so its keys carry the "head." prefix.
+    state = torch.load(run_dir / "model.pt", map_location="cpu")
+    load_trainable_state(head, {k.removeprefix("head."): v for k, v in state.items()})
     return head.to(device).eval(), cfg
 
 
