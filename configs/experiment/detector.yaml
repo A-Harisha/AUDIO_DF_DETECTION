@@ -7,6 +7,7 @@ name: ???                 # run name; experiments/runs/<name> must not exist
 features: true            # true: train the head on cached features of the frozen backbone
 views: [clean, codec]     # features=true: cached train views (clean, codec, encodec)
 val_views: [clean, codec] # features=true: dev views to validate on; selection = their mean EER
+band: null                # [start, stop): restrict the head to this slice of backbone layers
 film: false               # block A (codec-supervised condition vector) + FiLM
 lora_rank: 0              # features=false only
 unfreeze: false           # features=false only: fine-tune the whole backbone

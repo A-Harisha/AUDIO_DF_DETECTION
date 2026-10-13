@@ -805,3 +805,59 @@ remaining levers are data quantity and head capacity. Full-train extraction (cle
 182,357 clips) started 13:26; dev stays at the partial 47,400 clips, hardlinked, so train is the
 only variable. The encodec view of full train (+6.8 h) is deliberately not extracted until the
 2-view result says whether more data shrinks the spread at all.
+
+## 2026-10-13 — The ensemble premise, measured first: members are not diverse, so fusion gains ~0.1 points
+
+**Why this entry exists.** The goal changed to "beat SOTA with an ensemble that also survives adversarial
+attack", which reverses the single-model rule of 2026-10-09. Before building a fusion stage, the
+premise was measured on the nine runs already scored on eval. Fusion was fit on the dev `calib`
+split only (clean + codec, the views every run has) and tested on the full eval set.
+
+**Current best single model (full train + encodec view, not previously logged):**
+
+| run | eval EER | eval minDCF |
+|---|---|---|
+| fullenc_seed1337 | **3.89%** | **0.1061** |
+| fullenc_seed1 | 4.07% | 0.1097 |
+| fullenc_seed2 | 4.21% | 0.1138 |
+| mean (3 seeds) | 4.06% | 0.1099 |
+
+Full train narrowed the seed spread from 1.17 points (40% of train: 3.96-5.13) to **0.32** (3.89-4.21),
+and the mean now sits below the verified single-system reference (4.17% / 0.119, arXiv:2501.05545
+Table A.13). This is the first intervention that moved the variance, and it confirms the 2026-10-10
+conclusion that the lever was data quantity, not tuning.
+
+**Member correlation on eval (Pearson, scores z-scored on dev calib).** Six WavLM runs: **0.974-0.994**.
+Three XLS-R runs: 0.946-0.983. WavLM against XLS-R: **0.879-0.928**. Different seeds, different dropout,
+different views and even a different backbone all give near-duplicate scores.
+
+**Fusion gain (best subset of each size; the subset was chosen ON EVAL, so these are upper bounds).**
+
+| rule | best k | eval EER | eval minDCF |
+|---|---|---|---|
+| best single | 1 | 3.89% | 0.1061 |
+| mean of z-scores | 4 | **3.74%** | **0.1027** |
+| logistic, fit on dev calib | 2 | 3.88% | 0.1061 |
+
+**Result: the fusion stage is not the bottleneck.** The plain mean buys 0.15 EER points at its
+eval-selected optimum, which is inside the 0.32-point seed spread, and adding members past four makes
+it worse (k=9: 4.15%). Logistic fusion fit on dev is worse than the unweighted mean at every size and
+collapses as members are added (k=9: 5.74%), the same dev/eval disagreement seen throughout this log.
+The ensemble SOTA target (T45, 2.59% / 0.0750, arXiv:2408.08739) is 1.3 EER points away. No fusion rule
+closes that over members correlated at 0.98.
+
+**Cause found, and it is mechanical.** The learned layer weighting of every unbanded WavLM head is the
+same and nearly uniform (top five layers 24, 10, 9, 8-11; maximum weight 0.067 against 0.040 for
+uniform). All six WavLM members therefore read almost the same vector. XLS-R picks a different band
+(17-19, plus 5) and that single difference is the whole 0.99 -> 0.89 drop in correlation.
+
+**Consequence for the adversarial goal.** At correlation 0.98 a perturbation that moves one member's
+score moves every member's score, so this ensemble would also carry no robustness benefit. Accuracy and
+adversarial robustness have the same binding constraint here: member diversity.
+
+**Next, in this order.** (1) Layer-band members: restrict each head to one slice of the backbone, so the
+feature paths differ by construction (`Head(band=...)`, `scripts/chain_bands.sh`, four bands over
+WavLM's 25 outputs, seed 1337, everything else at default; control `fullenc_seed1337`). Report per-member
+EER, the correlation matrix and the mean-fusion gain. (2) Build the condition gate only if correlation
+actually drops. (3) Then the adversarial harness (white-box PGD on the waveform, and black-box: transfer
+plus the Malafide / Malacopula attacks already in eval), reported separately.

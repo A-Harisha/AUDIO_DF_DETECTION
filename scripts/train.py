@@ -76,6 +76,7 @@ def main(cfg: DictConfig) -> None:
     write_json(run_dir / "config.json", resolved)
     log.info("seed=%d", set_seed(cfg.seed))
     n_channels = len(CODEC_NAMES) if exp.film else 0
+    band = None if exp.band is None else tuple(exp.band)
 
     if exp.features:
         parts = [feature_set(cfg, f"train_{v}") for v in exp.views]
@@ -86,7 +87,8 @@ def main(cfg: DictConfig) -> None:
         for v in exp.val_views:  # independent of the train views, so runs stay comparable
             vx, vmeta = feature_set(cfg, f"dev_{v}", split="select")
             val[f"dev_{v}"] = (feature_loader(vx, vmeta, 4096), vmeta)
-        model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout, n_channels=n_channels))
+        model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout,
+                                         n_channels=n_channels, band=band))
     else:
         train_meta = pd.read_parquet(Path(cfg.paths.manifests) / "train.parquet")
         dataset = AudioDataset(train_meta, exp.crop_seconds, rawboost=RawBoost() if exp.rawboost else None,
@@ -97,14 +99,15 @@ def main(cfg: DictConfig) -> None:
         val = {name: audio_set(cfg, name, split="select", n=exp.val_n) for name in ("dev_clean", "dev_codec")}
         backbone = Backbone.from_pretrained(cfg.backbone.name, freeze=not exp.unfreeze, lora_rank=exp.lora_rank)
         model = CaesdDetector(backbone, Head(backbone.n_layers, backbone.feature_dim, dropout=exp.dropout,
-                                             n_channels=n_channels))
+                                             n_channels=n_channels, band=band))
     log.info("train clips: %d | label %s | val sets: %s", len(train_meta),
              train_meta["label"].value_counts().to_dict(), {k: len(v[1]) for k, v in val.items()})
 
     best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr, backbone_lr=exp.backbone_lr,
                weight_decay=exp.weight_decay, patience=exp.patience, cond_weight=exp.cond_weight,
                device=cfg.device, select_window=exp.select_window)
-    best["layer_weights"] = torch.softmax(model.head.layer_logits, 0).tolist()
+    # band_mask included: without it the logged weights are not the ones the head used.
+    best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
     write_json(run_dir / "best.json", best)
     log.info("best epoch %d | select EER %.4f", best["epoch"], best["select"])
 

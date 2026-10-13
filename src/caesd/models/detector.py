@@ -24,18 +24,30 @@ from .film import FiLM
 
 
 class Head(nn.Module):
+    """``band`` restricts the layer weighting to ``range(*band)``: the head may then use only that
+    slice of the backbone. Every unbanded head converges to nearly the same near-uniform weighting
+    (top layers 24, 10, 9, 8-11 on all four WavLM runs), which is why their eval scores correlate
+    at 0.99 and fusing them gains 0.1 points (docs/experiment_log.md, 2026-10-13). A band forces a
+    different feature path, so banded heads are the diverse members of the ensemble."""
+
     def __init__(self, n_layers: int, feature_dim: int, hidden: int = 256, dropout: float = 0.2,
-                 n_channels: int = 0, condition_dim: int = 32, n_out: int = 1) -> None:
+                 n_channels: int = 0, condition_dim: int = 32, n_out: int = 1,
+                 band: tuple[int, int] | None = None) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(feature_dim, elementwise_affine=False)  # layers differ in scale
         self.layer_logits = nn.Parameter(torch.zeros(n_layers))
+        keep = torch.zeros(n_layers, dtype=torch.bool)
+        keep[slice(*band) if band is not None else slice(None)] = True
+        if not keep.any():
+            raise ValueError(f"band {band} selects no layer of {n_layers}")
+        self.register_buffer("band_mask", torch.where(keep, 0.0, -torch.inf))
         self.condition_encoder = ConditionEncoder(feature_dim, condition_dim, n_channels) if n_channels else None
         self.film = FiLM(feature_dim, condition_dim) if n_channels else None
         self.mlp = nn.Sequential(nn.Dropout(dropout), nn.Linear(feature_dim, hidden), nn.GELU(),
                                  nn.Dropout(dropout), nn.Linear(hidden, n_out))
 
     def forward(self, layers: torch.Tensor) -> dict[str, torch.Tensor | None]:
-        weights = torch.softmax(self.layer_logits, dim=0)
+        weights = torch.softmax(self.layer_logits + self.band_mask, dim=0)
         x = (weights[None, :, None] * self.norm(layers.float())).sum(dim=1)
         channel_logits = None
         if self.condition_encoder is not None:
