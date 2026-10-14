@@ -24,7 +24,9 @@ plus the adversarial attacks at a quarter of that cap), cropped to ``+attack_sec
 metrics of that subsample are reported beside the attacked ones, so the drop is read against the
 right baseline and never against the full-eval number. The crop also means these clean numbers do
 not equal the full-eval ones even for the same model: the cached-feature path pools over up to 16 s
-and this path over 4 s. NOT YET CHECKED: that the two paths agree in rank on the same clips.
+and this path over 4 s. ``path_agreement`` checks that the two still RANK the same clips the same
+way, and raises if they do not: a disagreement would mean the attack is measuring a different
+system from the one the eval table describes.
 
 Reported per budget: EER, and the attacker's success rate at the threshold that the CLEAN subsample
 puts at 0.1% and 1% false-accept -- the rate at which a spoof clip crosses a fixed operating point
@@ -46,7 +48,7 @@ from torch.utils.data import DataLoader
 
 from caesd.attacks import l2_budget, pgd, snr_db, spsa
 from caesd.data.datasets import AudioDataset, collate
-from caesd.eval import calib_scale
+from caesd.eval import calib_scale, member_scores
 from caesd.metrics import compute_eer, far_frr_at_threshold, min_dcf, threshold_at_far
 from caesd.models.ensemble import ScoreEnsemble
 from caesd.utils.logging import get_logger, log_hparams, write_json
@@ -111,6 +113,30 @@ def score_all(score_fn, loader: DataLoader, device: str, attack=None) -> tuple[n
     return np.concatenate(idx)[order], np.concatenate(score)[order], np.concatenate(snr)[order]
 
 
+def path_agreement(runs_dir: Path, runs: list[str], utt: np.ndarray, clean: np.ndarray,
+                   mean: np.ndarray, std: np.ndarray, floor: float) -> dict:
+    """Do the waveform path and the cached-feature path rank the same clips the same way?
+
+    The robustness numbers come from ``ScoreEnsemble`` running the backbone on a 4 s crop; the
+    accuracy numbers come from heads reading features pooled over up to 16 s. The two therefore
+    cannot be EQUAL, and a correlation is the only check available. If they disagree in rank, the
+    attack is measuring a different system from the one the eval table describes, which would make
+    every robustness claim here about the wrong model -- so this raises rather than warns."""
+    meta, raw = member_scores(runs_dir, runs, "eval_clean", ["utt"])
+    row = pd.Series(np.arange(len(meta)), index=meta["utt"].to_numpy())
+    cached = ((raw[row.loc[utt].to_numpy()] - mean) / std).mean(axis=1)
+    rank = lambda v: np.argsort(np.argsort(v)).astype(float)  # noqa: E731
+    out = {"pearson": float(np.corrcoef(cached, clean)[0, 1]),
+           "spearman": float(np.corrcoef(rank(cached), rank(clean))[0, 1])}
+    log.info("path agreement, waveform vs cached features: pearson %.4f spearman %.4f (floor %.2f)",
+             out["pearson"], out["spearman"], floor)
+    if out["spearman"] < floor:
+        raise RuntimeError(
+            f"waveform and cached-feature paths rank differently (spearman {out['spearman']:.4f} < "
+            f"{floor}): the attack would not be measuring the system the eval table describes")
+    return out
+
+
 def report(label: np.ndarray, clean: np.ndarray, attacked: np.ndarray, snr: np.ndarray) -> dict:
     """EER under attack, and the share of spoof clips that cross the CLEAN thresholds at 0.1% and
     1% false-accept. The thresholds come from the clean scores, because a deployment fixes its
@@ -156,6 +182,8 @@ def main(cfg: DictConfig) -> None:
     results: dict = {"runs": runs, "n_per_cell": n_per_cell, "steps": steps, "eot": eot,
                      "clean": report(label, clean, clean, np.full_like(clean, np.inf))}
     log.info("clean subsample: EER %.4f minDCF %.4f", results["clean"]["eer"], results["clean"]["min_dcf"])
+    results["path_agreement"] = path_agreement(runs_dir, runs, meta["utt"].to_numpy(), clean, mean, std,
+                                                cfg.get("min_path_rank_agreement", 0.9))
     frame = meta[["utt", "label", "codec", "generator"]].assign(clean=clean)
 
     # --- black-box, free: the Malafide / Malacopula attacks already in the eval set ---
