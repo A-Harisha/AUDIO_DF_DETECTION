@@ -1032,3 +1032,54 @@ committing ~30 h to waveform PGD training, run the cheap probe: feature-space PG
 band heads costs minutes on cached features. It is honestly a weak defence -- the attacker goes
 through the waveform while this hardens only the head -- but it says whether the real thing is worth
 the compute. Transfer and SPSA against the ensemble are still running.
+
+## 2026-10-14 — The ensemble gives ZERO adversarial robustness benefit (study `adv_bands`, complete)
+
+**Claim tested.** Member diversity decorrelates the members' clean scores (0.98 -> 0.81) and gains
+0.28 EER points. Does it also raise the cost of an adversarial attack? Answer: no, on every attack
+tested. Same 1,799-clip subsample, same budgets and step count as `adv_single`, so the two compare
+directly. Clean baselines: single 0.0478 / 0.1287, ensemble 0.0478 / 0.1123.
+
+| condition | single `fullenc_seed1337` | four-band ensemble |
+|---|---|---|
+| clean | EER 0.0478, success@0.1%FAR 0.0015 | EER 0.0478, 0.0015 |
+| PGD white-box 30 dB | **1.0000**, 1.0000 | **1.0000**, 1.0000 |
+| PGD white-box 20 dB | **1.0000**, 1.0000 | **1.0000**, 1.0000 |
+| PGD transfer 30 dB (crafted on the single model) | — | **1.0000**, 1.0000 |
+| PGD transfer 20 dB | — | **1.0000**, 1.0000 |
+| SPSA black-box 20 dB, 320 queries/clip | 0.2668, 0.0106 | 0.2624, 0.0144 |
+
+**Result 1: every gradient attack is a total break, on both systems.** EER 1.0000 is complete rank
+inversion and 100% of spoof clips cross the clean 0.1%-FAR threshold. Neither budget nor member
+count changed anything.
+
+**Result 2: TRANSFER is the finding that matters, and it is worse news than white-box.** A
+perturbation crafted on `fullenc_seed1337` alone defeats all four band members it never saw, at both
+budgets, completely. White-box assumes the attacker holds our exact system; transfer only assumes
+they hold SOME WavLM-based detector, and WavLM is a public checkpoint. Correlation with the surrogate
+was 0.78-0.96, far too high to break the gradient. The operative question is therefore not white-box
+versus black-box but whether the attacker has any gradient from a model sharing our backbone -- which
+is why SPSA, with no gradient at all, is the only attack that struggles.
+
+**Result 3: the black-box difference is NOT real.** 0.0106 against 0.0144 is 14 against 19 of 1,319
+spoof clips, a difference of 0.9 pooled standard deviations. The ensemble is neither better nor worse
+than the single model here, and reporting 1.06% against 1.44% as a degradation would be reading noise.
+
+**Result 4: benchmark Malafide / Malacopula attacks move a little, both ways.** On the ensemble:
+A23 0.0175, A18 0.0272, A30 0.0278, A32 0.0377, A20 0.0458, A27 0.0538, **A31 0.0775**. Against the
+single model the same attacks gave 0.0186, 0.0283, 0.0451, 0.0252, 0.0330, 0.0398, 0.0830. The
+ensemble is better on A30 (0.0278 vs 0.0451) and A31, worse on A20, A27 and A32. No pattern worth a
+claim at these sample sizes (about 630 clips per attack).
+
+**Conclusion, and it constrains the project goal.** Adversarial safety is not reachable by
+architecture. The ensemble bought 0.28 EER points of clean accuracy (3.89% -> 3.61% on full eval) and
+nothing at all in robustness. The cause is structural, not a tuning failure: the attacker holds every
+member's gradient and the mean combiner is differentiable, so PGD attacks the average. Only
+adversarial training can move these numbers.
+
+**Next, in cost order.** (1) Feature-space PGD training on the existing band heads -- minutes on
+cached features, honestly a weak defence because the attacker goes through the waveform while this
+hardens only the head, but it says whether waveform adversarial training (~30 h on the raw member) is
+worth the compute. (2) `scripts/chain_raw_transfer.sh`, staged: does a WavLM gradient reach a member
+that shares no backbone with it? If not, backbone heterogeneity rather than score-level diversity is
+where robustness has to come from.
