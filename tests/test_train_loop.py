@@ -44,7 +44,12 @@ def test_the_kept_weights_are_one_epoch_not_an_average(run, tmp_path):
     """EMA was rejected on held-out dev, so the checkpoint must be a single epoch's weights."""
     best = run([0.4, 0.3, 0.2, 0.1, 0.1, 0.1], tmp_path, select_window=3)
     state = torch.load(tmp_path / "model.pt")
-    assert set(state) == {n for n, p in CaesdDetector(None, Head(2, 4)).named_parameters() if p.requires_grad}
+    # Exactly the trainable parameters plus the buffers: no optimiser state, no averaged copy, and
+    # nothing missing. Buffers are in there because a from-scratch front end keeps its batch-norm
+    # running statistics in them, and a reload without those scores a different model.
+    reference = CaesdDetector(None, Head(2, 4))
+    assert set(state) == ({n for n, p in reference.named_parameters() if p.requires_grad}
+                          | {n for n, _ in reference.named_buffers()})
     assert best["select"] in (0.1, 0.2)
 
 

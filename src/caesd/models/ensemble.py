@@ -40,7 +40,14 @@ def load_member(run_dir: Path, backbone: Backbone, device: str) -> tuple[Head, d
     head = Head(backbone.n_layers, backbone.feature_dim, dropout=exp["dropout"], band=band)
     # The checkpoint was saved from the whole CaesdDetector, so its keys carry the "head." prefix.
     state = torch.load(run_dir / "model.pt", map_location="cpu")
-    load_trainable_state(head, {k.removeprefix("head."): v for k, v in state.items()})
+    load_trainable_state(head, {k.removeprefix("head."): v for k, v in state.items()
+                                if k.startswith("head.")})
+    # A trained-from-scratch front end is in the SAME checkpoint under "backbone.", because it is
+    # trainable and ``trainable_state`` saves every parameter that requires grad. A frozen SSL
+    # backbone contributes no such keys, so this is how the two cases are told apart.
+    body = {k.removeprefix("backbone."): v for k, v in state.items() if k.startswith("backbone.")}
+    if body:
+        load_trainable_state(backbone, body)
     return head.to(device).eval(), cfg
 
 
@@ -79,18 +86,32 @@ class ScoreEnsemble(nn.Module):
                   weights: torch.Tensor, device: str = "cuda") -> ScoreEnsemble:
         """Build from the run directories ``scripts/ensemble.py`` combined, loading each distinct
         backbone once and freezing everything: the attack perturbs the input, never the model."""
-        backbones: dict[str, Backbone] = {}
+        backbones: dict[str, nn.Module] = {}
         tags, heads = [], []
         for run in runs:
             run_dir = runs_dir / run
             cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
             tag, name = cfg["backbone"]["tag"], cfg["backbone"]["name"]
             if cfg["experiment"]["lora_rank"] or cfg["experiment"]["unfreeze"]:
-                raise NotImplementedError(f"{run}: the ensemble path assumes a frozen backbone")
-            if tag not in backbones:
-                backbones[tag] = Backbone.from_pretrained(name, freeze=True).to(device).eval()
-            head, _ = load_member(run_dir, backbones[tag], device)
-            tags.append(tag)
+                raise NotImplementedError(f"{run}: the ensemble path assumes a frozen SSL backbone")
+            if name == "raw":
+                # A from-scratch front end carries its OWN weights, so two raw runs are two
+                # different front ends and must not share a cache entry the way one pretrained
+                # checkpoint can. This member is the point of the WavLM-free transfer test: it
+                # shares no weights with an SSL surrogate, so a gradient from one may not reach it.
+                from .raw_frontend import RawFrontEnd
+
+                key = f"{tag}:{run}"
+                backbones[key] = RawFrontEnd(
+                    channels=cfg["backbone"]["channels"], n_stages=cfg["backbone"]["n_stages"],
+                    n_filters=cfg["backbone"]["n_filters"], kernel_size=cfg["backbone"]["kernel_size"],
+                ).to(device).eval()
+            else:
+                key = tag
+                if key not in backbones:
+                    backbones[key] = Backbone.from_pretrained(name, freeze=True).to(device).eval()
+            head, _ = load_member(run_dir, backbones[key], device)
+            tags.append(key)
             heads.append(head)
         model = cls(backbones, tags, heads, mean, std, weights).to(device).eval()
         for param in model.parameters():

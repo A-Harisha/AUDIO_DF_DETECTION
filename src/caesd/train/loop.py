@@ -59,7 +59,15 @@ def validate(model: CaesdDetector, val: dict[str, tuple[Iterable[dict], pd.DataF
 
 
 def trainable_state(model: torch.nn.Module) -> dict:
+    """Every trainable parameter, plus every buffer.
+
+    Buffers are included because a trained-from-scratch front end keeps its batch-norm running
+    statistics there, not in its parameters. Without them a fresh load -- a white-box attack
+    building the model from the run directory, say -- would score with untrained normalisation
+    statistics and silently measure a different model. A frozen backbone has almost no buffers, so
+    this costs nothing in the common case."""
     names = {n for n, p in model.named_parameters() if p.requires_grad}
+    names |= {n for n, _ in model.named_buffers()}
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items() if k in names}
 
 
