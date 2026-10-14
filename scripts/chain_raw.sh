@@ -32,7 +32,7 @@ F="paths.manifests=experiments/data_full paths.features=data/features_fulltrain 
 L=experiments/logs_partial
 run() { name=$1; shift; echo "== $(date +%H:%M) start $name"; uv run python "$@" > $L/$name.log 2>&1; rc=$?; echo "== $(date +%H:%M) end $name (exit $rc)"; [ $rc -eq 0 ] || exit $rc; }
 
-run raw_seed1337 scripts/train.py $F backbone=raw experiment.name=raw_seed1337 seed=1337 \
+run raw_seed1337 scripts/train.py $F backbone=raw data.num_workers=8 experiment.name=raw_seed1337 seed=1337 \
   experiment.features=false experiment.batch_size=64 experiment.epochs=12 \
   experiment.rawboost=true \
   experiment.backbone_lr=1.0e-3 experiment.lr=1.0e-3 \

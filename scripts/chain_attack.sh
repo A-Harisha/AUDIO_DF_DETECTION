@@ -24,10 +24,10 @@ run() { name=$1; shift; echo "== $(date +%H:%M) start $name"; uv run python "$@"
 # 20 PGD steps, two SNR budgets. One white-box PGD pass over the set costs ~20 min on the 3090 Ti and
 # SPSA at 320 queries per clip costs ~2 h, so this is one overnight run, not a sweep. Widen
 # n_per_cell and steps only once the first pass says the measurement is worth more compute.
-S="+n_per_cell=40 +steps=20 +snr_db=[30,20] +spsa_samples=8"
+S="+n_per_cell=40 +steps=20 +snr_db=[30,20] +spsa_samples=8 data.num_workers=8"
 
 # 1. the control: the strongest single model (3.89% EER / 0.1061 minDCF on full eval)
-run adv_single scripts/attack.py $F $V $S +study=adv_single "+runs=[fullenc_seed1337]"
+#run adv_single scripts/attack.py $F $V $S +study=adv_single "+runs=[fullenc_seed1337]"
 # 2. the band ensemble, white-box and black-box, with the single model as the transfer surrogate
 run adv_bands scripts/attack.py $F $V $S +study=adv_bands "+runs=[$B]" "+surrogate=[fullenc_seed1337]"
 echo "== CHAIN DONE"
