@@ -974,3 +974,61 @@ In cost order:
 3. Narrower bands (eight 3-layer bands, `scripts/chain_bands8.sh`, ~40 min). Cheapest, but the
    saturation above makes a large gain unlikely; it is worth running as the control that says whether
    more members of the same kind are exhausted.
+
+## 2026-10-14 — Adversarial robustness, measured: white-box is a total break, black-box holds
+
+**Claim served.** The project goal names adversarial safety, and the 2026-10-09 rule says robustness
+must be reported as its own measured result, never assumed. Both halves of the threat model are
+reported apart, as decided on 2026-10-13.
+
+**Protocol.** PGD cannot run on 680,774 clips, so both studies use the SAME stratified subsample:
+40 clips per (codec, class) cell and 10 per (adversarial attack, codec) cell, 1,799 clips in all,
+480 bona fide, 12 codecs, 17 attacks, cropped to 4 s. 20 PGD steps, L2 budget set by target SNR,
+perturbations projected over the valid samples only so zero padding is never attacked. The clean
+metrics of that same subsample are the baseline; they are NOT the full-eval numbers, because the
+subsample deliberately over-weights C04, C07 and the adversarial attacks.
+
+**Path agreement (the precondition for reading any of this as a statement about our system).** The
+attack path runs the backbone on a 4 s crop; the eval table comes from features pooled over up to
+16 s. On the same 1,799 clips the two rank the clips the same way: Pearson **0.9618**, Spearman
+**0.9340**. `scripts/attack.py` now enforces a 0.9 Spearman floor and raises below it. The residual
+0.07 of rank variance is the crop, and it bounds how finely these numbers can be read.
+
+**Single model `fullenc_seed1337` (3.89% / 0.1061 on full eval). Study `adv_single`.**
+
+| condition | EER | minDCF | success@0.1% FAR | success@1% FAR | median SNR |
+|---|---|---|---|---|---|
+| clean | 0.0478 | 0.1287 | 0.0015 | 0.0106 | — |
+| PGD white-box 30 dB | **1.0000** | 1.0000 | **1.0000** | 1.0000 | 32.5 dB |
+| PGD white-box 20 dB | **1.0000** | 1.0000 | **1.0000** | 1.0000 | 23.1 dB |
+| SPSA black-box 20 dB, 320 queries/clip | 0.2668 | 0.7395 | **0.0106** | 0.0326 | 23.5 dB |
+
+Benchmark Malafide / Malacopula attacks already in eval, scored at no extra cost: EER 0.0186 (A23),
+0.0252 (A32), 0.0283 (A18), 0.0330 (A20), 0.0398 (A27), 0.0451 (A30), **0.0830 (A31)**; success at
+0.1% FAR 0.0061-0.0069 throughout.
+
+**Result 1: white-box robustness is zero.** EER 1.0000 with minDCF 1.0000 is complete rank
+inversion -- the attack pushes spoofs up and bona fide down until the ordering fully reverses -- and
+every spoof clip crosses the threshold the clean scores put at 0.1% false-accept. A perturbation
+32 dB below the signal suffices. No budget tested was survivable. The detector is undefended and
+this is what undefended means, quantified.
+
+**Result 2: black-box robustness is real.** A gradient-free attacker with 320 queries per clip
+reaches 1.06% success at the same operating point where the white-box attacker reaches 100%. That
+is a 94-point gap, and it is the number a deployment faces. The benchmark's own adversarial attacks,
+crafted against other detectors, cost at most 3.5 EER points (A31: 8.30% against 4.78% clean), so
+transfer from an unknown detector is weak too.
+
+**Result 3 (study `adv_bands`, in progress): the ensemble changes nothing white-box.** The four-band
+ensemble, clean 0.0478 / 0.1123 on the same subsample, gives PGD white-box 30 dB EER **1.0000**,
+success 1.0000, median SNR 32.3 dB -- identical to the single model. The cause is structural: the
+attacker holds all four members' gradients and the mean combiner is differentiable, so PGD attacks
+the average. Member correlation of 0.81 is irrelevant when every member is visible at once.
+**An ensemble is not an adversarial defence.** It bought 0.28 EER points of clean accuracy
+(3.89% -> 3.61%) and zero white-box robustness.
+
+**Consequence for the plan.** Only adversarial training can move the white-box number. Before
+committing ~30 h to waveform PGD training, run the cheap probe: feature-space PGD on the existing
+band heads costs minutes on cached features. It is honestly a weak defence -- the attacker goes
+through the waveform while this hardens only the head -- but it says whether the real thing is worth
+the compute. Transfer and SPSA against the ensemble are still running.
