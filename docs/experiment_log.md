@@ -1083,3 +1083,59 @@ hardens only the head, but it says whether waveform adversarial training (~30 h 
 worth the compute. (2) `scripts/chain_raw_transfer.sh`, staged: does a WavLM gradient reach a member
 that shares no backbone with it? If not, backbone heterogeneity rather than score-level diversity is
 where robustness has to come from.
+
+## 2026-10-15 — The raw member fails as a detector; it breaks the mean and proves the mean's limit
+
+**Run `raw_seed1337`** (learnable sinc filterbank + 5 residual stages, 0.5M parameters, from scratch,
+RawBoost on, codec augmentation at p=0.5, 12 epochs over the full train set, seed 1337).
+
+| | best dev select EER | eval EER | eval minDCF |
+|---|---|---|---|
+| without RawBoost (abandoned at epoch 3) | 0.2790 | not scored | — |
+| with RawBoost (12 epochs, kept epoch 8) | 0.2825 | **36.61%** | 0.8478 |
+
+**Result 1: RawBoost made no difference, and the prediction that it would was wrong.** The 2026-10-13
+entry called augmentation "a precondition, not a variable to isolate" for a from-scratch raw model,
+on the evidence that the un-augmented run was memorising its train attacks. With RawBoost the model
+plateaus at the same place: dev select EER 0.370 -> 0.308 -> 0.296 -> 0.293 -> 0.292, up to 0.326,
+best 0.2825 at epoch 8, then flat at 0.286-0.290. Train BCE still falls to 0.066 while dev stalls,
+so it still memorises train attacks; augmentation slowed that without preventing it. At 36.61% eval
+EER this is not a usable detector. The cause is not augmentation but capacity and data: 0.5M
+parameters from scratch on 182,357 clips against a 300M-parameter backbone pretrained on far more.
+
+**Result 2: heterogeneous front ends DO decorrelate, hard.** Eval correlation of `raw_seed1337` with
+the SSL members: band19_25 0.233, band13_19 0.343, fullenc_seed1337 0.365, band7_13 0.450,
+band0_7 0.592 -- against 0.59-0.94 among the bands themselves and 0.78-0.96 with the WavLM surrogate.
+The architecture does what it was built to do; it just cannot detect. Including it drops the
+ensemble's mean off-diagonal correlation from 0.851 to 0.699.
+
+**Result 3 (study `ens_raw`): the first study where the plain mean LOSES.** Six members, eval pooled:
+
+| combiner | EER | minDCF | d_EER vs best_single, CI95 |
+|---|---|---|---|
+| best_single (fullenc_seed1337) | 3.89% | 0.1061 | — |
+| mean | **4.37%** | 0.1206 | **[+0.0044, +0.0052]** (worse) |
+| logistic | 3.71% | 0.1035 | [-0.0022, -0.0014] |
+| global_mix | **3.67%** | **0.1011** | [-0.0025, -0.0020] |
+| gated | 3.76% | 0.1031 | [-0.0016, -0.0011] |
+
+The unweighted mean has no way to ignore a member, so a 36.61% member drags it to 4.37%, below the
+best single model. The learned combiners ignore it correctly: `global_mix` gives it weight **0.0035**
+and `logistic` gives it a NEGATIVE weight (-0.674), i.e. uses it as a correction rather than as a
+detector. **This corrects the 2026-10-13 conclusion that "the plain mean beats every learned
+combiner": that holds only while every member is competent.** The rule is that the mean is best when
+members are comparable and a learned combiner is required when one is not.
+
+**Result 4: weak-and-decorrelated has a floor.** band0_7 at 10.60% helps (removing it makes the rest
+worse); raw_seed1337 at 36.61% hurts. Decorrelation does not redeem a member near chance.
+
+**Headline unchanged.** `ens_mixed` (four bands + the full-stack head, unweighted mean) stays the best
+result at **3.61% EER / 0.1001 minDCF**. `global_mix` on the six-member set reaches 3.67% while
+putting 0.70 on fullenc_seed1337 and 0.28 on band7_13 -- effectively a two-member system -- so
+nothing here beats it. The raw member's value was diagnostic, not operational.
+
+**Note on the fusion code.** `ens_raw` first failed outright: `member_scores` required every member to
+have scored the same clips, and a feature-trained head scores the 47,400 extracted dev clips while an
+audio-trained member scores the whole 140,950-clip dev manifest. Members are now aligned by `utt`
+with the intersection taken, a 90% floor against fusing over an unintended corner, and tests for
+shuffled order, a superset member, a near-disjoint pair and a disjoint pair.
