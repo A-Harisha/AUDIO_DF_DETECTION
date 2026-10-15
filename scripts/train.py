@@ -66,15 +66,50 @@ def audio_set(cfg: DictConfig, name: str, split: str | None = None, n: int | Non
     return loader, meta
 
 
+def sweep_plan(cfg: DictConfig) -> list[dict]:
+    """The (name, band, seed) heads this invocation trains.
+
+    Without ``+sweep_bands`` it is the single head ``experiment.name``, exactly as before. With it,
+    one head per (band, seed) pair named ``band<a>_<b>_s<seed>`` -- the names ``chain_seeds.sh``
+    used -- so downstream studies pick them up unchanged.
+
+    Why a sweep exists at all: a head trains in three minutes but its features take an hour to read
+    (28 GB of train views, 7 GB of dev and a 34.8 GB eval cache, at about 16 MB/s on this disk), and
+    eight heads differing only by a band mask and a seed re-read all of it eight times. Sharing one
+    load is the whole point; nothing else about a run changes, so a swept head and a separately
+    trained one are the same result."""
+    bands = cfg.get("sweep_bands")
+    if not bands:
+        return [{"name": cfg.experiment.name, "band": cfg.experiment.band, "seed": cfg.seed}]
+    seeds = list(cfg.get("sweep_seeds", [cfg.seed]))
+    return [{"name": f"band{b[0]}_{b[1]}_s{s}", "band": list(b), "seed": s}
+            for s in seeds for b in bands]
+
+
+def head_config(resolved: dict, head: dict) -> dict:
+    """The run's own resolved config. The band and seed MUST be the head's, not the invocation's:
+    ``ScoreEnsemble`` and the ensemble study read the band back from here to rebuild the head."""
+    out = {**resolved, "seed": head["seed"],
+           "experiment": {**resolved["experiment"], "name": head["name"], "band": head["band"]}}
+    out["experiment"].pop("sweep_bands", None)
+    return out
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     exp = cfg.experiment
-    run_dir = Path(cfg.paths.runs) / exp.name
-    run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
     resolved = OmegaConf.to_container(cfg, resolve=True)
     log_hparams(log, resolved)
-    write_json(run_dir / "config.json", resolved)
-    log.info("seed=%d", set_seed(cfg.seed))
+    plan = sweep_plan(cfg)
+    run_dirs = {}
+    for head in plan:
+        run_dir = Path(cfg.paths.runs) / head["name"]
+        run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
+        write_json(run_dir / "config.json", head_config(resolved, head))
+        run_dirs[head["name"]] = run_dir
+    if len(plan) > 1 and not exp.features:
+        raise NotImplementedError("the sweep shares a cached feature load; it needs experiment.features=true")
+    log.info("sweep: %d head(s) %s", len(plan), [h["name"] for h in plan])
     n_channels = len(CODEC_NAMES) if exp.film else 0
     band = None if exp.band is None else tuple(exp.band)
 
@@ -87,8 +122,7 @@ def main(cfg: DictConfig) -> None:
         for v in exp.val_views:  # independent of the train views, so runs stay comparable
             vx, vmeta = feature_set(cfg, f"dev_{v}", split="select")
             val[f"dev_{v}"] = (feature_loader(vx, vmeta, 4096), vmeta)
-        model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout,
-                                         n_channels=n_channels, band=band))
+        model = None  # built per head below, so one feature load serves the whole sweep
     else:
         train_meta = pd.read_parquet(Path(cfg.paths.manifests) / "train.parquet")
         dataset = AudioDataset(train_meta, exp.crop_seconds, rawboost=RawBoost() if exp.rawboost else None,
@@ -110,25 +144,38 @@ def main(cfg: DictConfig) -> None:
     log.info("train clips: %d | label %s | val sets: %s", len(train_meta),
              train_meta["label"].value_counts().to_dict(), {k: len(v[1]) for k, v in val.items()})
 
-    best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr, backbone_lr=exp.backbone_lr,
-               weight_decay=exp.weight_decay, patience=exp.patience, cond_weight=exp.cond_weight,
-               device=cfg.device, select_window=exp.select_window)
-    # band_mask included: without it the logged weights are not the ones the head used.
-    best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
-    write_json(run_dir / "best.json", best)
-    log.info("best epoch %d | select EER %.4f", best["epoch"], best["select"])
+    trained = {}
+    for head in plan:
+        run_dir = run_dirs[head["name"]]
+        log.info("== head %s | band %s | seed %d", head["name"], head["band"], set_seed(head["seed"]))
+        if model is None or len(plan) > 1:
+            head_band = None if head["band"] is None else tuple(head["band"])
+            model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout,
+                                             n_channels=n_channels, band=head_band))
+        best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr,
+                   backbone_lr=exp.backbone_lr, weight_decay=exp.weight_decay, patience=exp.patience,
+                   cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window)
+        # band_mask included: without it the logged weights are not the ones the head used.
+        best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
+        write_json(run_dir / "best.json", best)
+        log.info("best epoch %d | select EER %.4f", best["epoch"], best["select"])
+        trained[head["name"]] = model
 
+    # One load per score set, scored by every head: the 34.8 GB eval cache is read ONCE for the
+    # whole sweep rather than once per head.
     for name in exp.score_sets:
         if exp.features:
             sx, meta = feature_set(cfg, name)
             loader = feature_loader(sx, meta, 4096)
         else:
             loader, meta = audio_set(cfg, name)
-        scores = predict(model, loader, cfg.device)
-        meta["sim_codec"] = np.asarray(CODEC_NAMES)[scores.pop("channel").to_numpy()]
-        out = meta[_SCORE_COLUMNS].assign(**scores.drop(columns="idx"))
-        out.to_parquet(run_dir / f"scores_{name}.parquet")
-        log.info("scored %s: %d clips -> %s", name, len(out), run_dir / f"scores_{name}.parquet")
+        for run_name, head_model in trained.items():
+            scores = predict(head_model, loader, cfg.device)
+            row = meta.copy()
+            row["sim_codec"] = np.asarray(CODEC_NAMES)[scores.pop("channel").to_numpy()]
+            out = row[_SCORE_COLUMNS].assign(**scores.drop(columns="idx"))
+            out.to_parquet(run_dirs[run_name] / f"scores_{name}.parquet")
+            log.info("scored %s for %s: %d clips", name, run_name, len(out))
 
 
 if __name__ == "__main__":
