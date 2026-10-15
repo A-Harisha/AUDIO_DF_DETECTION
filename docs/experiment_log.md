@@ -1139,3 +1139,64 @@ have scored the same clips, and a feature-trained head scores the 47,400 extract
 audio-trained member scores the whole 140,950-clip dev manifest. Members are now aligned by `utt`
 with the intersection taken, a 90% floor against fusing over an unintended corner, and tests for
 shuffled order, a superset member, a near-disjoint pair and a disjoint pair.
+
+## 2026-10-15 — Three-seed variance of the ensemble: the headline is 3.80%, not 3.61%
+
+**Claim tested.** The 3.61% EER / 0.1001 minDCF of 2026-10-13 rested on one seed. Three interventions
+in this log (EMA, the 3-epoch selection window, a lower max learning rate) were each rejected only
+after three seeds, so a single-seed ensemble number could not be reported as a result.
+
+Runs `band{0_7,7_13,13_19,19_25}_s{1,2}` (seed 1337 already existed), studies `ens_mixed_s1` and
+`ens_mixed_s2`: four bands plus that seed's full-stack head, identical in every other respect.
+
+**Member spread on eval, per band:**
+
+| band | 1337 | 1 | 2 | mean | spread |
+|---|---|---|---|---|---|
+| band0_7 | 10.60 | 11.78 | 10.62 | 11.00 | **1.18** |
+| band7_13 | 4.06 | 4.18 | 4.38 | 4.21 | 0.32 |
+| band13_19 | 4.83 | 5.01 | 4.92 | 4.92 | 0.18 |
+| band19_25 | 6.71 | 6.78 | 7.03 | 6.84 | 0.32 |
+
+The weakest band is by far the most seed-sensitive, and seed 1337 is the best or tied-best seed for
+three of the four bands -- so the single-seed headline was built on a favourable draw.
+
+**Ensemble, eval pooled, EER % per seed:**
+
+| combiner | 1337 | 1 | 2 | **mean** | spread |
+|---|---|---|---|---|---|
+| best_single | 3.89 | 4.07 | 4.21 | 4.06 | 0.33 |
+| mean | 3.61 | 3.88 | 3.89 | **3.80** | 0.28 |
+| logistic | 3.75 | 3.88 | 4.04 | 3.89 | 0.29 |
+| global_mix | 3.69 | 3.85 | 3.86 | **3.80** | **0.17** |
+| gated | 3.75 | 4.25 | 3.93 | 3.98 | 0.50 |
+
+minDCF 3-seed means: global_mix **0.1046** (spread 0.0051), mean 0.1056 (0.0085), logistic 0.1079
+(0.0080), best_single 0.1099 (0.0077), gated 0.1090 (0.0118).
+
+**Result 1: the headline is 3.80% / 0.1056, and 3.61% / 0.1001 was the best of three seeds.** Every
+earlier entry quoting 3.61% as the result must be read as a best-seed figure. The three-seed mean
+still beats the verified best single system (4.17% / 0.119, arXiv:2501.05545 Table A.13) on both
+metrics; the gap to ensemble SOTA (T45, 2.59% / 0.0750, arXiv:2408.08739) widens to 1.21 EER points.
+
+**Result 2: the ensemble gain is real and reproducible.** best_single 4.06% -> 3.80% is a 0.26-point
+gain on three-seed means, against 0.28 measured on seed 1337 alone. The gain survives; only its
+absolute level moves.
+
+**Result 3: averaging does NOT reduce seed variance here.** Ensemble spread 0.28 against 0.33 for the
+single models. The reason was anticipated in `chain_seeds.sh`: the four bands of one seed are trained
+on the same data order, so their errors move together across seeds, and averaging over correlated
+errors cannot shrink the spread. Reducing the ensemble's variance therefore needs seed diversity
+INSIDE the member set, not more bands.
+
+**Result 4: `global_mix` is the better combiner, reversing the single-seed verdict.** It ties the mean
+on EER (3.80), beats it on minDCF (0.1046 against 0.1056) and has 40% less spread (0.17 against 0.28).
+On one seed the unweighted mean looked best and this log said so; across three seeds it is the less
+stable choice. Together with `ens_raw` -- where the mean broke on a junk member and global_mix did not
+-- the mean's apparent superiority was an artefact of one seed and uniformly competent members.
+`gated` has the worst spread of all five (0.50), a fourth independent reason it stays rejected.
+
+**Method note.** All eight heads were trained in ONE invocation via `+sweep_bands` / `+sweep_seeds`,
+sharing a single feature load: 50 minutes against 8+ hours for separate runs, which spend an hour
+each reading 70 GB at about 16 MB/s to do three minutes of training. Per-head run directories,
+configs, selection and scores are unchanged.
