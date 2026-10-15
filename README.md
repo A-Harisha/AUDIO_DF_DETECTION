@@ -7,10 +7,14 @@ rejected; nothing in this README is a claim that the log does not carry.
 
 Where it stands (2026-10-13, full eval set, official cost model: spoof prior 0.05, C_miss 1, C_fa 10):
 
+All figures are THREE-SEED MEANS (1337, 1, 2) with the spread, not a best seed: on one seed the
+ensemble reads 3.61% / 0.1001, which is the best draw of the three.
+
 | system | EER | minDCF |
 | --- | --- | --- |
-| best single model (`fullenc_seed1337`, frozen WavLM + 0.26M head) | 3.89% | 0.1061 |
-| ensemble, mean of four layer bands + the full-stack head (`ens_mixed`) | **3.61%** | **0.1001** |
+| best single model (frozen WavLM + 0.26M head) | 4.06% (spread 0.33) | 0.1099 |
+| ensemble, four layer bands + the full-stack head, global mixture | **3.80%** (spread **0.17**) | **0.1046** |
+| ensemble, same members, unweighted mean | 3.80% (spread 0.28) | 0.1056 |
 | verified best single system in the literature (arXiv:2501.05545 Table A.13) | 4.17% | 0.119 |
 | ensemble SOTA, T45 challenge winner, 6 models (arXiv:2408.08739) | 2.59% | 0.0750 |
 
@@ -73,8 +77,10 @@ eval, and fusing them gains 0.15 EER points. `Head(band=...)` restricts a head t
 backbone, which drops pairwise correlation to 0.59-0.94 and raises the fusion gain to 0.39 points.
 The weakest member helps most: `band0_7` is 10.60% EER alone and removing it makes the rest worse.
 
-The combiner is a plain unweighted mean of standardised scores, or the condition-independent global
-mixture if minDCF is the target. A condition-dependent gate was built and rejected — see the log.
+The combiner is the condition-independent global mixture: across three seeds it ties the unweighted
+mean on EER, beats it on minDCF and has 40% less spread. The unweighted mean looked better on a
+single seed, and it also breaks outright when one member is near chance, because it cannot
+down-weight anything. A condition-dependent gate was built and rejected four times — see the log.
 
 ## Code map
 
