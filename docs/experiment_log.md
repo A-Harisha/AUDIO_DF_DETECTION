@@ -1301,3 +1301,74 @@ PGD-3 on waveforms, a 20k-clip subset, 3 epochs -- roughly 4-6 h, and it hardens
 actually attacked. Not started; it needs a decision, because the honest prior after three closed
 architectural routes is that robustness here is expensive and may not be reachable at a usable
 accuracy.
+
+## 2026-10-16 -- LoRA passes the gate, and the 2026-10-06 failure was never LoRA's fault
+
+**Claim served.** Fine-tuning the backbone is the only credible route to the remaining 1.21 EER
+points to T45 (2.59% / 0.0750), because our ensemble members are frozen backbones carrying 0.26M
+heads while T45's six are fine-tuned and gain 35% relative from fusion against our 6%. LoRA had
+failed here once, so the question was whether it fails at full data scale.
+
+**Run.** `lora_probe`: WavLM-Large, LoRA rank 16 on q/k/v/out_proj (3.15M trainable adapters, which
+matches 2*16*1024*4*24 exactly), plain BCE, all 182,357 train clips, batch 32, 8 epochs,
+backbone_lr 1e-5, head lr 1e-3, codec_p 0.5. Validated every epoch on the dev `select` split
+(A09-A16, unseen). `score_sets=[]`: eval deliberately NOT scored, because 9 h of scoring is
+worthless until dev says fine-tuning helps at all. 11:32 to 17:34, exit 0.
+
+**GATE: beat the control's dev select EER of 0.0308 on the same two views.** Note the gate value:
+`fullenc_seed1337` publishes 0.0435, but that is its THREE-view mean and this run validates on TWO.
+The comparable number is 0.0308. The error was caught before the result was read.
+
+| epoch | train BCE | dev clean | dev codec | A12 | A13 | select |
+|---|---|---|---|---|---|---|
+| 0 | 0.0677 | 0.0145 | 0.0313 | 0.0101 | 0.0382 | 0.0229 |
+| 1 | 0.0216 | 0.0132 | 0.0328 | 0.0117 | 0.0350 | 0.0230 |
+| 2 | 0.0178 | 0.0117 | 0.0299 | 0.0133 | 0.0215 | 0.0208 |
+| 3 | 0.0135 | 0.0066 | 0.0278 | 0.0051 | 0.0159 | **0.0172** |
+| 4 | 0.0092 | 0.0073 | 0.0305 | 0.0066 | 0.0179 | 0.0189 |
+| 5 | 0.0084 | 0.0067 | 0.0313 | 0.0066 | 0.0120 | 0.0190 |
+| 6 | 0.0060 | 0.0073 | 0.0305 | 0.0082 | 0.0107 | 0.0189 |
+| 7 | 0.0059 | 0.0074 | 0.0308 | 0.0082 | 0.0123 | 0.0189 |
+
+**Result: 0.0172 at epoch 3, 44% below the gate.** The probe passes.
+
+**The 2026-10-06 failure is now diagnosed, and it was not LoRA.** That run reached dev EER 0.217 on
+unseen attacks while a logistic probe on the frozen features reached 0.010, and the log recorded
+train-attack memorisation as the suspicion without isolating a cause. It used 4,591 clips and
+confounded LoRA with FiLM, a joint Cllr loss and codec supervision. Here, LoRA alone on 182,357
+clips never memorises: A12 0.0051 and A13 0.0159 at the kept epoch, against 0.777 and 0.509 then.
+The cause was data scale or one of the confounded components, not low-rank adaptation. A prediction
+I made earlier -- that the raw member's memorisation and the LoRA failure shared one mechanism --
+survives for the raw member and is withdrawn for LoRA.
+
+**Epochs 4-7 are saturation, not overfitting, and the per-view split is the evidence.** Train BCE
+halves from 0.0135 to 0.0059 while select sits inside 0.0001 of 0.0189 for four straight epochs.
+Clean holds at its best (EER 0.0067-0.0074, min_dcf 0.0166 at epoch 5, the lowest of the run) and
+A13 keeps IMPROVING to 0.0107. Only the codec view loses ground, 0.0278 -> 0.0313. So the late-epoch
+cost is channel specialisation, not attack memorisation; if it is worth fixing, the lever is more
+codec augmentation during fine-tuning, not fewer epochs. The epoch-4 rise of +0.0017 was reported as
+possible-noise at the time and the plateau confirms that reading.
+
+**An unasked-for finding.** The learned layer weighting moves. A frozen WavLM probe peaks near layer
+20 (2026-10-07); this head peaks at layer 8 (0.072) with a nearly flat profile over layers 4-10 and
+a maximum only 1.8x uniform. LoRA redistributes the useful evidence down the stack and spreads it,
+which is a plausible reason fine-tuned members should fuse better than our band members, whose
+diversity is imposed by a mask rather than learned.
+
+**Hope, stated as arithmetic and not more.** The control gives ONE measured dev-to-eval mapping on
+this setup: dev select 0.0308 -> eval 3.89% EER, a ratio of 1.26. Applying it to 0.0172 gives about
+2.2% EER, below T45's 2.59%. That is an extrapolation from a single point, over a dev split that
+lacks eval's unseen codecs and its A18-A32 adversarial attacks. It is a reason to spend 9 h scoring
+eval, not a result.
+
+**A blocker found while verifying the implementation.** `ScoreEnsemble.from_runs`
+(src/caesd/models/ensemble.py:95) raises NotImplementedError when `lora_rank` is non-zero, because
+it caches one shared backbone per tag -- correct for frozen backbones, wrong for LoRA, where every
+member carries its own adapters. So a LoRA member can be trained and scored alone today but cannot
+enter the ensemble or the attack harness. The fix is to key the cache by run and rebuild with the
+run's own rank, the shape the raw front end already uses in the branch below. It is a precondition
+for a fine-tuned ensemble, not for scoring this member's eval.
+
+**Robustness is unchanged by all of this.** LoRA is an accuracy lever only. Every gradient-bearing
+attacker still succeeds at 98-100% across single models, four layer bands, two backbones and
+feature-space hardening.
