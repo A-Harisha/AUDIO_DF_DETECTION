@@ -1200,3 +1200,52 @@ stable choice. Together with `ens_raw` -- where the mean broke on a junk member 
 sharing a single feature load: 50 minutes against 8+ hours for separate runs, which spend an hour
 each reading 70 GB at about 16 MB/s to do three minutes of training. Per-head run directories,
 configs, selection and scores are unchanged.
+
+## 2026-10-16 — Backbone heterogeneity is NOT a transfer defence; the architectural route is closed
+
+**Claim tested.** Transfer from `fullenc_seed1337` defeated all four WavLM layer-band members
+completely (2026-10-14). Every member there read WavLM, so that result could not separate "the
+perturbation is general" from "the perturbation rides the shared backbone". Studies
+`adv_xlsr_from_wavlm` and `adv_wavlm_from_xlsr` test both directions across two different SSL
+backbones, with no training: `frozen_xlsr_enc_drop50` (5.97% EER) and `fullenc_seed1337` (3.89%)
+already existed. Same 1,799-clip subsample and budgets as every earlier attack study.
+
+| system under test | surrogate | budget | white-box EER | transfer EER | transfer success@0.1%FAR |
+|---|---|---|---|---|---|
+| XLS-R member | WavLM | 30 dB | 1.0000 | 0.9333 | 0.8324 |
+| XLS-R member | WavLM | 20 dB | 1.0000 | 0.9960 | **0.9841** |
+| WavLM member | XLS-R | 30 dB | 1.0000 | 0.8789 | 0.8923 |
+| WavLM member | XLS-R | 20 dB | 1.0000 | 0.9938 | **0.9947** |
+
+Clean baselines on the subsample: XLS-R 0.0921 / 0.2635, WavLM 0.0478 / 0.1287. Path agreement for
+the XLS-R member, checked inline for the first time: pearson 0.9465, spearman 0.9307.
+
+**Result: a perturbation crafted on one SSL backbone defeats a different one 98-99% of the time at
+20 dB.** The result is symmetric, so it is not an artefact of which model was the surrogate. Transfer
+does cost the attacker something at the tighter budget -- 83-89% at 30 dB against 100% white-box --
+but a slightly larger perturbation erases that, and 20 dB is still 20 dB below the signal. Backbone
+heterogeneity raises the required budget marginally and defends nothing.
+
+**This corrects the 2026-10-14 reading.** That entry attributed the 100% transfer to the shared
+WavLM backbone and concluded that "backbone heterogeneity rather than score-level diversity is where
+robustness has to come from". That hypothesis is now falsified: the perturbation exploits something
+common to SSL speech models, not something about WavLM.
+
+**The architectural route to robustness is closed.** Three designs measured, all fail:
+
+| design | white-box | transfer |
+|---|---|---|
+| single model | 100% | — |
+| four layer bands, one backbone | 100% | 100% |
+| across backbones (WavLM <-> XLS-R) | 100% | 98-99% |
+
+**Consequence.** Under the threat model scoped on 2026-10-15 (white-box excluded, transfer kept),
+the only honest robustness claim is against a QUERY-ONLY attacker: SPSA at 320 queries per clip
+reaches 1.06% success on the single model and 1.44% on the band ensemble, a difference that is noise.
+Anything holding a gradient from any SSL speech detector succeeds. No ensemble design changes this,
+so the only remaining lever is adversarial training, and the cheap feature-space probe should decide
+whether the ~30 h waveform version is worth it.
+
+**Side note for the accuracy work.** This also means the two goals do not want the same member set:
+XLS-R added nothing to accuracy (3.61% -> 3.60% on seed 1337) and adds nothing to robustness either,
+so there is no reason to keep a second backbone in the ensemble.
