@@ -1249,3 +1249,55 @@ whether the ~30 h waveform version is worth it.
 **Side note for the accuracy work.** This also means the two goals do not want the same member set:
 XLS-R added nothing to accuracy (3.61% -> 3.60% on seed 1337) and adds nothing to robustness either,
 so there is no reason to keep a second backbone in the ensemble.
+
+## 2026-10-16 — Feature-space adversarial training: rejected, but it was the wrong test
+
+**Claim tested.** Every architectural route to robustness is closed (2026-10-14, 2026-10-16), leaving
+adversarial training. The waveform version costs about 30 h, so this was meant as the cheap gate on
+it: PGD in the CACHED FEATURE space, L2 budget 5% of each clip's feature norm, 3 steps, which runs in
+minutes because the head is 0.26M parameters. Run `advtrain_seed1337`, otherwise identical to
+`fullenc_seed1337`; study `adv_advtrain` uses the same attack set and budgets as every earlier one.
+
+| | dev select EER | eval EER | eval minDCF |
+|---|---|---|---|
+| control `fullenc_seed1337` | 0.0435 | 3.89% | 0.1061 |
+| `advtrain_seed1337` | 0.1169 | **14.36%** | 0.3294 |
+
+Attack success at the clean 0.1%-FAR threshold, both on the 1,799-clip subsample:
+
+| attack | control | hardened head |
+|---|---|---|
+| white-box 30 dB | 1.0000 | 0.9932 |
+| white-box 20 dB | 1.0000 | **1.0000** |
+| transfer 30 dB | 1.0000 | 0.7763 |
+| transfer 20 dB | 1.0000 | **0.9773** |
+
+EER is 1.0000 under every attack in both systems: the ranking stays fully inverted and only the
+fixed-threshold crossing rate moves. Path agreement for the hardened head: pearson 0.9344,
+spearman 0.9279.
+
+**Result: rejected.** The hardening costs 10.5 EER points of clean accuracy and buys nothing durable.
+Its only visible effect is at the tightest budget -- transfer success 0.7763 at 30 dB -- and that
+collapses to 0.9773 when the attacker spends a 20 dB perturbation instead. White-box returns to
+1.0000 at 20 dB. The asymmetry at 30 dB is mechanistically sensible (a white-box attacker
+re-optimises against the hardened head, a transfer attacker carries an un-hardened surrogate's
+gradient) but its magnitude makes it useless.
+
+**A side result worth keeping.** That a 5%-of-norm perturbation in the pooled-layer space can take a
+head from 3.89% to 14.36% EER says the spoofing evidence in those features is concentrated in
+directions that small a perturbation can largely erase. That is a statement about the features, not
+about the defence.
+
+**What this does NOT settle, and the probe design is at fault.** It hardened the HEAD against
+perturbations in FEATURE space, while the attacker perturbs the WAVEFORM and arrives through the
+backbone. The failure is exactly what that mismatch predicts, so the probe gives no positive evidence
+for waveform adversarial training and only weak negative evidence -- the mechanism explaining its
+failure does not apply to the real thing. The docstring of `feature_pgd` flagged this before the run;
+the gate was still set as though a proxy in the wrong space could answer the question, which it
+cannot.
+
+**What would decide it.** A small-scale WAVEFORM adversarial-training run: backbone in the loop,
+PGD-3 on waveforms, a 20k-clip subset, 3 epochs -- roughly 4-6 h, and it hardens the path that is
+actually attacked. Not started; it needs a decision, because the honest prior after three closed
+architectural routes is that robustness here is expensive and may not be reachable at a usable
+accuracy.
