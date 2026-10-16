@@ -154,7 +154,8 @@ def main(cfg: DictConfig) -> None:
                                              n_channels=n_channels, band=head_band))
         best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr,
                    backbone_lr=exp.backbone_lr, weight_decay=exp.weight_decay, patience=exp.patience,
-                   cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window)
+                   cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window,
+                   adv_eps=exp.adv_eps, adv_steps=exp.adv_steps)
         # band_mask included: without it the logged weights are not the ones the head used.
         best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
         write_json(run_dir / "best.json", best)

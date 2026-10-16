@@ -16,6 +16,7 @@ import torch
 from ..metrics import compute_eer, min_dcf
 from ..models.detector import CaesdDetector
 from ..utils.logging import get_logger
+from ..attacks import feature_pgd
 from .losses import detection_loss
 
 log = get_logger("caesd.train")
@@ -92,6 +93,8 @@ def fit(
     cond_weight: float,
     device: str = "cuda",
     select_window: int = 3,
+    adv_eps: float = 0.0,
+    adv_steps: int = 3,
 ) -> dict:
     """Train; after every epoch validate, append to ``metrics.jsonl`` and keep the best checkpoint.
 
@@ -101,7 +104,13 @@ def fit(
     epoch 1, an undertrained head (docs/experiment_log.md, 2026-10-09). Averaging the weights
     instead was tested as EMA and is worse on held-out dev, because late weights overfit the train
     attacks. ``select_window=1`` restores the old rule. Stops after ``patience`` epochs with no
-    improvement."""
+    improvement.
+
+    ``adv_eps`` > 0 turns on feature-space adversarial training: every batch is first pushed towards
+    its wrong class inside an L2 ball of ``adv_eps`` times that clip's own feature norm. It hardens
+    the HEAD only -- a real attacker perturbs the waveform and arrives through the backbone -- so
+    whether it buys any waveform robustness is a measurement, not an assumption. Off by default, so
+    no existing run changes."""
     if epochs < select_window:
         raise ValueError(f"epochs {epochs} is below select_window {select_window}: nothing could be selected")
     model.to(device)
@@ -122,10 +131,15 @@ def fit(
         start, sums, steps = time.time(), {}, 0
         for step, batch in enumerate(train_loader):
             lengths = None if batch["lengths"] is None else batch["lengths"].to(device)
+            x, y = batch["x"].to(device), batch["label"].to(device)
+            if adv_eps > 0.0:
+                # Feature-space adversarial training. Crafted in float32 outside autocast: the
+                # perturbation direction is a normalised gradient and float16 loses it to underflow.
+                x = feature_pgd(lambda f: model(f, lengths)["score"].float(), x, y, adv_eps, adv_steps)
             with torch.autocast("cuda", dtype=torch.float16):
-                out = model(batch["x"].to(device), lengths)
+                out = model(x, lengths)
             out = {k: None if v is None else v.float() for k, v in out.items()}
-            loss, parts = detection_loss(out, batch["label"].to(device), batch["channel"].to(device), cond_weight)
+            loss, parts = detection_loss(out, y, batch["channel"].to(device), cond_weight)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)

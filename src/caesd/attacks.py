@@ -110,3 +110,31 @@ def snr_db(clean: torch.Tensor, attacked: torch.Tensor, lengths: torch.Tensor) -
     signal = ((clean * mask) ** 2).sum(1)
     noise = (((attacked - clean) * mask) ** 2).sum(1)
     return 10.0 * torch.log10(signal / noise.clamp_min(1e-20))
+
+
+def feature_pgd(score_fn: Callable[[torch.Tensor], torch.Tensor], features: torch.Tensor,
+                label: torch.Tensor, eps_rel: float, steps: int = 3,
+                step_frac: float = 0.4) -> torch.Tensor:
+    """PGD in the CACHED FEATURE space, for adversarial training. ``features`` is [B, L, D].
+
+    ``eps_rel`` is the L2 budget as a fraction of each clip's own feature norm, so the budget does
+    not depend on how the backbone happens to scale its layers. Each clip is pushed towards its
+    WRONG class: a spoof clip's score up, a bona fide clip's score down, which is the direction an
+    attacker wants and therefore the direction training should see.
+
+    This hardens the HEAD only. A real attacker perturbs the waveform and reaches the head through
+    the backbone, so a head made robust here need not be robust there; whether it is at all is the
+    measurement this exists for, not an assumption it rests on."""
+    if steps < 1:
+        raise ValueError(f"steps {steps} must be >= 1")
+    goal = torch.where(label == 1, -1.0, 1.0)[:, None, None]
+    budget = eps_rel * features.flatten(1).norm(dim=1).view(-1, 1, 1)
+    delta = torch.zeros_like(features, requires_grad=True)
+    for _ in range(steps):
+        grad = torch.autograd.grad(score_fn(features + delta).sum(), delta)[0]
+        with torch.no_grad():
+            direction = grad / grad.flatten(1).norm(dim=1).clamp_min(1e-12).view(-1, 1, 1)
+            stepped = delta + goal * step_frac * budget * direction
+            scale = (budget / stepped.flatten(1).norm(dim=1).clamp_min(1e-12).view(-1, 1, 1)).clamp(max=1.0)
+            delta.copy_(stepped * scale)
+    return (features + delta).detach()

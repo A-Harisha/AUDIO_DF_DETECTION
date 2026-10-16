@@ -72,3 +72,40 @@ def test_spsa_moves_the_score_without_a_gradient() -> None:
     assert torch.all(score_fn(attacked, LENGTHS) - before > 0)
     assert torch.all((attacked - wave).norm(dim=1) <= budget.squeeze(1) + 1e-5)
     assert torch.all((attacked - wave)[1, 256:] == 0.0)
+
+
+def test_feature_pgd_respects_its_relative_budget_and_moves_the_wrong_way() -> None:
+    """Adversarial training is only as honest as its budget: a perturbation that exceeded it would
+    train on an attack nobody faces, and one pointing the wrong way would train on nothing."""
+    from caesd.attacks import feature_pgd
+
+    torch.manual_seed(0)
+    features = torch.randn(6, 5, 8)
+    label = torch.tensor([1, 0, 1, 0, 1, 0])
+    weight = torch.randn(5, 8)
+    score_fn = lambda f: (f * weight).flatten(1).sum(1)  # noqa: E731
+
+    before = score_fn(features)
+    attacked = feature_pgd(score_fn, features, label, eps_rel=0.1, steps=4)
+    after = score_fn(attacked)
+
+    delta = (attacked - features).flatten(1).norm(dim=1)
+    budget = 0.1 * features.flatten(1).norm(dim=1)
+    assert torch.all(delta <= budget * 1.001)
+    # A linear score is maximised on the sphere, so the budget must be reached, not approached.
+    assert torch.all(delta > 0.99 * budget)
+    # Each clip moves towards its WRONG class: spoof (label 0) up, bona fide (label 1) down.
+    moved = after - before
+    assert torch.all(moved[label == 0] > 0)
+    assert torch.all(moved[label == 1] < 0)
+
+
+def test_feature_pgd_rejects_zero_steps() -> None:
+    from caesd.attacks import feature_pgd
+
+    try:
+        feature_pgd(lambda f: f.flatten(1).sum(1), torch.randn(2, 3, 4), torch.tensor([0, 1]), 0.1, steps=0)
+    except ValueError as exc:
+        assert "steps" in str(exc)
+    else:
+        raise AssertionError("zero steps was accepted; no perturbation would be crafted")
