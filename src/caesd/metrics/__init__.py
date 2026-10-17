@@ -6,7 +6,7 @@ Score convention used everywhere in this package:
     label == 0    -> spoof (non-target)
 LLR convention: llr = log[ p(x | bona fide) / p(x | spoof) ];  llr > 0 supports bona fide.
 """
-from .bootstrap import bootstrap_ci
+from .bootstrap import bootstrap_ci, paired_ci
 from .cllr import cllr, min_cllr
 from .dcf import act_dcf, min_dcf
 from .eer import compute_det_curve, compute_eer
@@ -23,6 +23,7 @@ __all__ = [
     "min_cllr",
     "min_dcf",
     "misleading_evidence_rates",
+    "paired_ci",
     "miss_at_far",
     "threshold_at_far",
     "threshold_transfer",

@@ -47,7 +47,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from caesd.data.manifests import assign_split_by
 from caesd.eval import descriptor, member_scores
-from caesd.metrics import compute_eer, min_dcf
+from caesd.metrics import compute_eer, min_dcf, paired_ci
 from caesd.models.gate import ConditionGate, label_probe_eer
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
@@ -67,17 +67,6 @@ def read_set(cfg: DictConfig, runs: list[str], name: str, meta_columns: list[str
     if len(merged) != len(meta):
         raise RuntimeError(f"{name}: {len(meta)} scored clips, {len(merged)} with a descriptor")
     return merged.drop(columns="_row"), raw[merged["_row"].to_numpy()]
-
-
-def paired_ci(metric, a: np.ndarray, b: np.ndarray, label: np.ndarray, n: int, seed: int) -> list[float]:
-    """95% bootstrap CI of metric(a) - metric(b) on the same resampled trials. Negative = a wins."""
-    rng = np.random.default_rng(seed)
-    diffs = []
-    for _ in range(n):
-        idx = rng.integers(0, label.size, label.size)
-        if label[idx].min() != label[idx].max():
-            diffs.append(metric(a[idx], label[idx]) - metric(b[idx], label[idx]))
-    return [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))]
 
 
 def report(frame: pd.DataFrame, group: str, n_boot: int, seed: int) -> dict:

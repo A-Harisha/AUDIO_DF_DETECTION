@@ -43,7 +43,7 @@ from caesd.data.condition_grid import EVAL_CODEC
 from caesd.data.datasets import CODEC_NAMES
 from caesd.data.manifests import assign_split_by
 from caesd.eval import descriptor as read_descriptor
-from caesd.metrics import act_dcf, cllr, compute_eer, min_cllr, min_dcf
+from caesd.metrics import act_dcf, cllr, compute_eer, min_cllr, min_dcf, paired_ci
 from caesd.models import CalibrationHypernet, label_probe_eer
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
@@ -96,17 +96,6 @@ def calibrate(calib: pd.DataFrame, test: pd.DataFrame, pred_cell: np.ndarray,
     out["hypernet"] = out[f"hypernet_s{seeds[0]}"]
     out["null_weight"] = out[f"null_weight_s{seeds[0]}"]
     return out
-
-
-def paired_ci(metric, llr_a: np.ndarray, llr_b: np.ndarray, labels: np.ndarray, n: int, seed: int) -> list[float]:
-    """95% bootstrap CI of metric(a) - metric(b) on the same resampled trials."""
-    rng = np.random.default_rng(seed)
-    diffs = []
-    for _ in range(n):
-        idx = rng.integers(0, labels.size, labels.size)
-        if labels[idx].min() != labels[idx].max():
-            diffs.append(metric(llr_a[idx], labels[idx]) - metric(llr_b[idx], labels[idx]))
-    return [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))]
 
 
 def report(df: pd.DataFrame, n_boot: int, seed: int, seeds: list[int]) -> dict:
