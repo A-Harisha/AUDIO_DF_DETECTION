@@ -98,9 +98,17 @@ def main(cfg: DictConfig) -> None:
                      control, c["n_paired"], c["eer"], c["eer_control"], c["d_eer"],
                      *c["d_eer/ci95"], c["d_eer/verdict"])
         if group is not None:
+            # A per-ATTACK cell holds spoof clips only, because the bona fide ones carry no
+            # generator. The ASVspoof protocol scores each attack against ALL bona fide clips, so a
+            # single-class cell is unioned with them rather than dropped -- dropping it returned an
+            # empty breakdown and said nothing about it.
+            bona = frame["label"].to_numpy() == 1
             for key, sub in frame.groupby(group):
-                if np.unique(sub["label"].to_numpy()).size == 2:
-                    out["groups"][str(key)] = metrics(sub)
+                if np.unique(sub["label"].to_numpy()).size < 2:
+                    sub = pd.concat([frame[bona], sub[sub["label"] == 0]], ignore_index=True)
+                if np.unique(sub["label"].to_numpy()).size < 2:
+                    continue  # a bona-fide-only cell: nothing to discriminate against
+                out["groups"][str(key)] = metrics(sub)
             for key, row in sorted(out["groups"].items(), key=lambda kv: -kv[1]["eer"])[:12]:
                 log.info("   %-12s n=%6d | EER %.4f | minDCF %.4f", key, row["n"], row["eer"], row["min_dcf"])
         write_json(run_dir / f"report_{name}.json", out)
