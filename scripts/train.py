@@ -25,7 +25,7 @@ from torch.utils.data import DataLoader
 from caesd.data.augment import CodecAugment, RawBoost
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, FeatureLoader, collate, seed_worker
 from caesd.models import Backbone, CaesdDetector, Head, RawFrontEnd
-from caesd.train.loop import fit, predict
+from caesd.train.loop import fit, load_trainable_state, predict
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
 
@@ -101,11 +101,21 @@ def main(cfg: DictConfig) -> None:
     resolved = OmegaConf.to_container(cfg, resolve=True)
     log_hparams(log, resolved)
     plan = sweep_plan(cfg)
+    if exp.score_only and (exp.features or len(plan) > 1):
+        raise NotImplementedError(
+            "score_only re-scores one finished features=false run. A cached-feature run is three "
+            "minutes of training, so it is re-scored by training it again, not by loading it.")
     run_dirs = {}
     for head in plan:
         run_dir = Path(cfg.paths.runs) / head["name"]
-        run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
-        write_json(run_dir / "config.json", head_config(resolved, head))
+        if exp.score_only:
+            # The config.json already there is the one that produced model.pt and MUST NOT be
+            # rewritten: ScoreEnsemble and the ensemble study read the head's shape back from it.
+            if not (run_dir / "model.pt").exists():
+                raise FileNotFoundError(f"{run_dir / 'model.pt'}: score_only needs a trained run")
+        else:
+            run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
+            write_json(run_dir / "config.json", head_config(resolved, head))
         run_dirs[head["name"]] = run_dir
     if len(plan) > 1 and not exp.features:
         raise NotImplementedError("the sweep shares a cached feature load; it needs experiment.features=true")
@@ -148,6 +158,11 @@ def main(cfg: DictConfig) -> None:
     for head in plan:
         run_dir = run_dirs[head["name"]]
         log.info("== head %s | band %s | seed %d", head["name"], head["band"], set_seed(head["seed"]))
+        if exp.score_only:
+            load_trainable_state(model, torch.load(run_dir / "model.pt", map_location="cpu"))
+            log.info("score_only: loaded %s, training nothing", run_dir / "model.pt")
+            trained[head["name"]] = model.to(cfg.device)
+            continue
         if model is None or len(plan) > 1:
             head_band = None if head["band"] is None else tuple(head["band"])
             model = CaesdDetector(None, Head(x.shape[1], x.shape[2], dropout=exp.dropout,

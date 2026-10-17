@@ -26,4 +26,5 @@ dropout: 0.2
 adv_eps: 0.0              # >0: feature-space adversarial training, as a fraction of the feature norm
 adv_steps: 3              # PGD steps used to craft each batch's perturbation
 cond_weight: 0.5
+score_only: false         # re-score a FINISHED run: load its model.pt, train nothing
 score_sets: [dev_clean, dev_codec, eval_clean]   # scored with the best checkpoint
