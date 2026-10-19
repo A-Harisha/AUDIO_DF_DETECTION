@@ -1372,3 +1372,85 @@ for a fine-tuned ensemble, not for scoring this member's eval.
 **Robustness is unchanged by all of this.** LoRA is an accuracy lever only. Every gradient-bearing
 attacker still succeeds at 98-100% across single models, four layer bands, two backbones and
 feature-space hardening.
+
+## 2026-10-17 -- LoRA on eval: the gain is real, and dev stops being a valid selector
+
+**Claim served.** Whether fine-tuning closes the remaining gap to T45 (2.59% EER / 0.0750 minDCF)
+from our 3.80%. `lora_probe`'s kept epoch-3 checkpoint was re-scored with the new
+`experiment.score_only=true`: dev clean and dev codec in full (140,950 clips each, 65 min), then
+eval (680,774 clips, 3 h 22 min). Nothing was retrained.
+
+**First, two errors in the dev verdict of 2026-10-16, both mechanical.** The control was wrong:
+`fullenc_seed1337`'s 0.0308 is a run that trains on a THIRD (encodec) view, and the matched
+two-view control is `full_seed1337` at select 0.0210. And the margin carried no error bar, while
+the 6,000-clip validation subsample has a standard error of about 0.0035 on an EER of 0.0172. Both
+faults are now mechanised away in `scripts/score_report.py`, which reports a PAIRED bootstrap
+difference against each named control and prints "not established" when the interval straddles
+zero. Validated control-against-control before use: it resolves the 0.0026 seed gap between
+`full_seed2` and `full_seed1337` as significant on 23,347 clips.
+
+**Dev, on the full select split (69,469 clips per view), is better than the subsample said.**
+
+| view | LoRA | control (23,347 paired) | d | CI 95% | verdict |
+|---|---|---|---|---|---|
+| clean | 0.0060 | 0.0119 full_seed1337 | -0.0063 | [-0.0077, -0.0049] | LoRA better |
+| clean |        | 0.0142 full_seed2    | -0.0087 | [-0.0103, -0.0071] | LoRA better |
+| codec | 0.0262 | 0.0302 full_seed1337 | -0.0041 | [-0.0064, -0.0018] | LoRA better |
+| codec |        | 0.0276 full_seed2    | -0.0015 | [-0.0040, +0.0009] | not established |
+
+Select mean 0.0161 against the controls' 0.0210 and 0.0209. LoRA halves the clean error and ties
+the best seed on codec -- exactly what the per-epoch curve predicted.
+
+**Eval: 3.99% EER / 0.1143 minDCF / 0.1478 minCllr.** I extrapolated 2.2% from dev using the
+control's single measured dev-to-eval ratio of 1.26. That was wrong by 1.8 points: LoRA's own ratio
+is 2.48. The extrapolation was flagged as single-point every time it was quoted, and it still failed.
+
+| comparison (paired, 680,774 clips) | LoRA | control | d | CI 95% | verdict |
+|---|---|---|---|---|---|
+| full_seed1337_eval (2 views) | 0.0399 | 0.0512 | -0.0113 | [-0.0119, -0.0109] | LoRA better |
+| full_seed2_eval (2 views)    | 0.0399 | 0.0446 | -0.0047 | [-0.0052, -0.0043] | LoRA better |
+| fullenc_seed1337 (3 views)   | 0.0399 | 0.0389 | +0.0010 | [+0.0005, +0.0015] | control better |
+
+**So fine-tuning DOES transfer to eval, by 0.5 to 1.1 points over the matched frozen controls.** The
+only frozen run that beats it is the one with more channel augmentation. I first reported LoRA as
+"worse than the frozen control" by comparing it to that three-view run; that was wrong and is
+corrected here.
+
+**The deficit is channel, not attack, and the per-codec table isolates it.** Eval clean is 0.0058,
+against dev clean 0.0060 -- the clean gain transferred EXACTLY, losing nothing. The real codecs
+never simulated in training are what break it: C07 0.0968, C04 0.0771, against C11 0.0138 (also
+never simulated) and clean 0.0058. This is the channel specialisation named from the dev curve
+before eval ran, and that prediction held.
+
+**Fusion: the best eval number the project has produced, and we cannot claim it.** Score-level
+fusion needs no backbone, so the `ScoreEnsemble.from_runs` LoRA refusal (white-box path only) does
+not apply. `ens_2view_base` and `ens_2view_lora` differ ONLY by the added member; both drop the
+encodec view, because `lora_probe` has no dev_encodec scores, so neither is comparable to the
+published three-view headline.
+
+| eval, 680,774 | best_single | mean | logistic | global_mix | gated |
+|---|---|---|---|---|---|
+| base, 5 members | 3.89 / .1061 | 3.62 / .1001 | 3.81 / .1051 | 3.66 / .1010 | 3.84 / .1074 |
+| + lora_probe    | 3.99 / .1143 | **3.45 / .0961** | 4.02 / .1152 | 3.99 / .1142 | 4.02 / .1155 |
+
+**But dev select ranks the combiners almost in reverse: logistic 0.0179 (best) to mean 0.0272
+(worst).** Selecting on dev, which the discipline requires, picks logistic and lands on 4.02% --
+worse than the base ensemble. The mechanism is explicit in the log: the learned combiners put
+nearly all weight on LoRA (logistic weight 7.95 against 1.06 for the next member; global mixture
+0.994 on lora_probe) because dev select, whose codecs are SIMULATED, ranks it best by a wide
+margin. Eval's real codecs punish that. Only the unweighted mean keeps the other five members.
+
+**The finding worth keeping is methodological: the dev select split is not a valid selector for a
+combiner when one member's channel-robustness profile differs from the others'.** The rank
+inversion is the evidence, and it is the same channel-shift story as the per-codec table and the
+loss to the three-view control -- three symptoms, one cause.
+
+**This also puts a question on the existing headline.** 3.80% uses the mean, but in `ens_2view_base`
+dev select prefers gated (0.0274) to mean (0.0314), so dev would not have chosen the mean there
+either. How the mean was selected for the three-view headline needs checking against that study's
+dev rows. Flagged, not asserted: those rows have not been read.
+
+**Next step this argues for, and it is one run.** LoRA with `views=[clean,codec,encodec]`, about 6 h.
+It attacks the single cause behind all three symptoms. The three-member fine-tuned ensemble (~34 h)
+should wait for it. Robustness is untouched by any of this: LoRA is an accuracy lever, and every
+gradient-bearing attacker still succeeds at 98-100%.
