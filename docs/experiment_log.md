@@ -1445,12 +1445,74 @@ combiner when one member's channel-robustness profile differs from the others'.*
 inversion is the evidence, and it is the same channel-shift story as the per-codec table and the
 loss to the three-view control -- three symptoms, one cause.
 
-**This also puts a question on the existing headline.** 3.80% uses the mean, but in `ens_2view_base`
-dev select prefers gated (0.0274) to mean (0.0314), so dev would not have chosen the mean there
-either. How the mean was selected for the three-view headline needs checking against that study's
-dev rows. Flagged, not asserted: those rows have not been read.
+**This also puts a question on the existing headline,** whose combiner is the global mixture, not
+the mean (corrected 2026-10-19; this entry first said "the mean"). Whether it was dev-selected needs
+checking against the three-seed studies' dev rows. Flagged, not asserted: those rows have not been
+read. [Checked 2026-10-19, below: it was not.]
 
 **Next step this argues for, and it is one run.** LoRA with `views=[clean,codec,encodec]`, about 6 h.
 It attacks the single cause behind all three symptoms. The three-member fine-tuned ensemble (~34 h)
 should wait for it. Robustness is untouched by any of this: LoRA is an accuracy lever, and every
 gradient-bearing attacker still succeeds at 98-100%.
+
+
+## 2026-10-19 -- the headline combiner was not chosen by the protocol the README states
+
+**Claim served.** The integrity of the project's single headline number, 3.80% EER / 0.1046 minDCF.
+README.md line 61 states the protocol: "combiners: fit on dev calib, chosen on dev select, eval
+scored once". This checks the headline against it. No compute: the rows were already in the logs.
+
+**The headline combiner is `global_mix`, not the mean.** README line 16 is the global mixture at
+3.80% / 0.1046; the mean is line 17 at 3.80% / 0.1056. My 2026-10-17 entry said "3.80% uses the
+mean" and was wrong; corrected above.
+
+**`global_mix` is not the dev select winner on ANY of the three seeds.** Combiner order is
+best_single, mean, logistic, global_mix, gated.
+
+| seed | dev select EER (5 combiners) | dev winner | eval EER of global_mix |
+|---|---|---|---|
+| 1337 | .0456 .0455 .0425 .0447 .0424 | gated .0424 | .0369 |
+| 1    | .0522 .0470 .0458 .0475 .0428 | gated .0428 | .0385 |
+| 2    | .0509 .0472 .0464 .0470 .0428 | gated .0428 | .0386 |
+
+**Taken literally, the protocol picks `gated` unanimously, which scores eval 3.98% / 0.1090** -- 0.18
+EER points worse than the reported headline.
+
+**But excluding `gated` from dev selection is principled and already documented**, so that is not the
+honest correction. Every ensemble log prints the precondition: the within-attack descriptor label
+probe FAILS on dev (EER 0.3194 today), and the line says so in words -- "the dev gated numbers are
+unusable". The gate's channel descriptor carries class evidence within an attack on dev, so gated's
+dev number is invalid by a test that runs before the result is read. Rejecting it is right.
+
+**With `gated` excluded, the protocol picks `logistic` -- again unanimously, on all three seeds --
+and that scores eval 3.89% / 0.1079.** Not `global_mix`.
+
+| combiner | dev select rank | eval EER (3-seed) | eval minDCF (3-seed) |
+|---|---|---|---|
+| logistic   | 1st on all 3 seeds | 3.89 | 0.1079 |
+| global_mix | 3rd, 4th, 3rd      | **3.80** | **0.1046** |
+| gated      | (rejected by its own precondition) | 3.98 | 0.1090 |
+
+**So the headline is 0.09 EER points and 0.0033 minDCF better than the stated protocol yields.** The
+reason given for `global_mix` in the 2026-10-16 entry -- "ties the mean on EER (3.80), beats it on
+minDCF (0.1046 against 0.1056)" -- quotes EVAL numbers. The seed-spread argument (0.17 against 0.28)
+and the `ens_raw` argument (the mean broke on a junk member, global_mix did not) are legitimate and
+do not touch eval, but they were not the stated rule, and spread was measured on eval too.
+
+**This is the same class of error as the LoRA control and the empty attack breakdown: a decision rule
+stated in one place and a different one applied in practice.** It is smaller than either -- 0.09
+points -- and the project's standing beats the verified single-system baseline (4.17% / 0.119)
+either way. It is not smaller than it needs to be reported.
+
+**Two honest ways to fix it, and the choice is a judgement, not a measurement.**
+  1. Report `logistic` at 3.89% / 0.1079 as the headline, which is what "chosen on dev select"
+     yields once gated is excluded for failing its precondition. Costs 0.09 points, needs no compute.
+  2. Keep `global_mix` and declare it A PRIORI, with a rationale that cites no eval number: its
+     condition-independent shape, and that it is the only combiner that survived a junk member in
+     `ens_raw`. Then say plainly in the README that the combiner is fixed by design, not selected on
+     dev, and delete the "chosen on dev select" claim.
+Option 2 is defensible and is probably the better system; option 1 is the one that needs no argument.
+Either way README line 61 is currently false and must change.
+
+**Not touched by this.** Every member-level number, every paired CI, the LoRA results, and the
+robustness measurements. This concerns only which of five combiners the headline reports.
