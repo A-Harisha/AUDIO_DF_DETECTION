@@ -91,9 +91,10 @@ def apply_codec(wave: np.ndarray, codec: str, quality: int, sr: int = TARGET_SR)
 
 
 def encodec(wave, kbps: float, sr: int = TARGET_SR):
-    """Encode and decode a torch waveform [T] with EnCodec (24 kHz model) at ``kbps``; back to
-    ``sr``, same length, on the device of ``wave``. It runs in the main process on the GPU: on CPU
-    in DataLoader workers it took minutes per batch and died with "bad allocation" (2026-10-09)."""
+    """Encode and decode a torch waveform with EnCodec (24 kHz model) at ``kbps``; back to ``sr``,
+    same length, on the device of ``wave``. Takes [T] or a batch [B, T] of equal-length clips and
+    returns the same shape. It runs in the main process on the GPU: on CPU in DataLoader workers it
+    took minutes per batch and died with "bad allocation" (2026-10-09)."""
     global _encodec_model
     import torch
     import torchaudio.functional as AF
@@ -102,9 +103,61 @@ def encodec(wave, kbps: float, sr: int = TARGET_SR):
         from transformers import EncodecModel
 
         _encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().to(wave.device)
+    flat = wave.dim() == 1
+    batch = wave[None] if flat else wave
     with torch.no_grad():
-        y = _encodec_model(AF.resample(wave[None, None], sr, _ENCODEC_SR), bandwidth=kbps).audio_values
-    return AF.resample(y[0, 0], _ENCODEC_SR, sr)[: wave.numel()]
+        y = _encodec_model(AF.resample(batch[:, None], sr, _ENCODEC_SR), bandwidth=kbps).audio_values
+    out = AF.resample(y[:, 0], _ENCODEC_SR, sr)
+    if out.shape[1] < batch.shape[1]:
+        raise ValueError(f"EnCodec returned {out.shape[1]} samples for {batch.shape[1]}: "
+                         "silently shortening a training crop would corrupt the batch")
+    out = out[:, : batch.shape[1]]
+    return out[0] if flat else out
+
+
+def encodec_batch(wave, channel, p: float, lengths=None, sr: int = TARGET_SR):
+    """Put a random ``p``-fraction of a batch [B, T] through EnCodec and relabel its channel.
+
+    Why it exists: the eval set's two hardest conditions for a fine-tuned model are C04 and C07,
+    the NEURAL codecs, and a features=false run never sees one -- ``CodecAugment`` runs in the
+    DataLoader workers and EnCodec cannot (see above). A frozen run gets them from the cached
+    ``encodec`` view, which is why the only frozen control that beats LoRA on eval is the one
+    trained with that view (2026-10-17).
+
+    The relabelling matches ``extract_features``: a clip the workers already put through MP3 becomes
+    ``mp3_encodec_wb`` (eval C07), a clip that did not becomes ``encodec_wb`` (C04).
+
+    ONE bandwidth per call, drawn uniformly, so the selected clips cost ONE EnCodec forward. A
+    per-clip bandwidth would cost up to five and add about 30 min to every epoch; one per batch
+    still gives each of the five rates roughly 1,100 batches per epoch, which is ample coverage.
+
+    EnCodec's output depends on the batch SIZE: a clip encoded alone and the same clip encoded in a
+    batch differ by 22-37 dB SNR, because a hair of numerical difference at the encoder flips a
+    residual-quantiser code. There is no cross-talk between clips -- identical rows give identical
+    output, and a clip is unaffected by loud neighbours -- and the difference sits 24 dB or more
+    BELOW the degradation the codec itself applies, so both are valid realisations of the same
+    codec. It does mean a batched crop is not bit-identical to the cached ``encodec`` view
+    (2026-10-19).
+    """
+    import torch
+
+    if not 0.0 <= p <= 1.0:
+        raise ValueError(f"encodec_p {p} is not a probability")
+    names = ("clean", *CODECS, *NEURAL_CODECS)
+    pick = torch.rand(wave.shape[0], device=wave.device) < p
+    if not bool(pick.any()):
+        return wave, channel
+    idx = pick.nonzero(as_tuple=True)[0]
+    rate = float(ENCODEC_KBPS[int(torch.randint(len(ENCODEC_KBPS), ()))])
+    out = wave.clone()
+    out[idx] = encodec(wave[idx], rate, sr).to(out.dtype)
+    if lengths is not None:  # EnCodec also "decodes" the zero padding; put the zeros back
+        keep = torch.arange(wave.shape[1], device=wave.device)[None] < lengths[:, None]
+        out = out * keep
+    new = channel.clone()
+    new[idx] = torch.where(channel[idx] == names.index("mp3_wb"),
+                           names.index("mp3_encodec_wb"), names.index("encodec_wb"))
+    return out, new
 
 
 def add_noise(wave: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:

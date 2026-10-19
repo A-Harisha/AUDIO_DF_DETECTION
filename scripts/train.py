@@ -117,6 +117,9 @@ def main(cfg: DictConfig) -> None:
             run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
             write_json(run_dir / "config.json", head_config(resolved, head))
         run_dirs[head["name"]] = run_dir
+    if exp.encodec_p > 0.0 and exp.features:
+        raise ValueError("encodec_p augments waveforms in the training loop; a cached-feature run "
+                         "gets the neural codec from its 'encodec' view instead")
     if len(plan) > 1 and not exp.features:
         raise NotImplementedError("the sweep shares a cached feature load; it needs experiment.features=true")
     log.info("sweep: %d head(s) %s", len(plan), [h["name"] for h in plan])
@@ -170,7 +173,7 @@ def main(cfg: DictConfig) -> None:
         best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr,
                    backbone_lr=exp.backbone_lr, weight_decay=exp.weight_decay, patience=exp.patience,
                    cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window,
-                   adv_eps=exp.adv_eps, adv_steps=exp.adv_steps)
+                   adv_eps=exp.adv_eps, adv_steps=exp.adv_steps, encodec_p=exp.encodec_p)
         # band_mask included: without it the logged weights are not the ones the head used.
         best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
         write_json(run_dir / "best.json", best)

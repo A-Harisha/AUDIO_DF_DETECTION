@@ -17,6 +17,7 @@ from ..metrics import compute_eer, min_dcf
 from ..models.detector import CaesdDetector
 from ..utils.logging import get_logger
 from ..attacks import feature_pgd
+from ..data.condition_grid import encodec_batch
 from .losses import detection_loss
 
 log = get_logger("caesd.train")
@@ -95,6 +96,7 @@ def fit(
     select_window: int = 3,
     adv_eps: float = 0.0,
     adv_steps: int = 3,
+    encodec_p: float = 0.0,
 ) -> dict:
     """Train; after every epoch validate, append to ``metrics.jsonl`` and keep the best checkpoint.
 
@@ -105,6 +107,11 @@ def fit(
     instead was tested as EMA and is worse on held-out dev, because late weights overfit the train
     attacks. ``select_window=1`` restores the old rule. Stops after ``patience`` epochs with no
     improvement.
+
+    ``encodec_p`` > 0 puts that fraction of every training batch through EnCodec on the GPU. It is
+    the one augmentation a features=false run cannot get from its DataLoader workers, and eval's two
+    hardest conditions for a fine-tuned model are exactly the neural codecs (2026-10-17). Off by
+    default, so no existing run changes.
 
     ``adv_eps`` > 0 turns on feature-space adversarial training: every batch is first pushed towards
     its wrong class inside an L2 ball of ``adv_eps`` times that clip's own feature norm. It hardens
@@ -132,6 +139,9 @@ def fit(
         for step, batch in enumerate(train_loader):
             lengths = None if batch["lengths"] is None else batch["lengths"].to(device)
             x, y = batch["x"].to(device), batch["label"].to(device)
+            channel = batch["channel"].to(device)
+            if encodec_p > 0.0:
+                x, channel = encodec_batch(x, channel, encodec_p, lengths)
             if adv_eps > 0.0:
                 # Feature-space adversarial training. Crafted in float32 outside autocast: the
                 # perturbation direction is a normalised gradient and float16 loses it to underflow.
@@ -139,7 +149,7 @@ def fit(
             with torch.autocast("cuda", dtype=torch.float16):
                 out = model(x, lengths)
             out = {k: None if v is None else v.float() for k, v in out.items()}
-            loss, parts = detection_loss(out, y, batch["channel"].to(device), cond_weight)
+            loss, parts = detection_loss(out, y, channel, cond_weight)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
