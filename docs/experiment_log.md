@@ -1516,3 +1516,90 @@ Either way README line 61 is currently false and must change.
 
 **Not touched by this.** Every member-level number, every paired CI, the LoRA results, and the
 robustness measurements. This concerns only which of five combiners the headline reports.
+
+## 2026-10-19 -- the neural codec was the whole deficit: 3.31% EER, and fusion stops helping
+
+**Claim served.** That fine-tuning closes the gap to T45 (2.59% / 0.0750), and that `lora_probe`'s
+eval weakness was channel specialisation with one identifiable cause.
+
+**The cause, and why `views` was not the lever.** `lora_probe` beat both matched two-view frozen
+controls on eval but lost to `fullenc_seed1337`, the one frozen run trained with the cached
+`encodec` view. Its per-codec table said the same thing from the other side: eval clean 0.0058, its
+BEST condition and exactly its dev clean of 0.0060, against C07 0.0968 and C04 0.0771 -- the two
+REAL NEURAL codecs. A features=false run had never seen a neural codec, because `CodecAugment` runs
+in the DataLoader workers and EnCodec cannot (GPU only; on CPU it took minutes per batch and died,
+2026-10-09). I first proposed fixing this with `views=[clean,codec,encodec]`. That would have done
+NOTHING: `views` selects cached feature sets and a features=false run ignores it entirely.
+
+**So `experiment.encodec_p` was added:** that fraction of every training batch goes through EnCodec
+on the GPU, relabelled the way `extract_features` does -- MP3-then-EnCodec becomes C07, plain
+EnCodec becomes C04. `lora_enc` is `lora_probe` with `encodec_p=0.3` and NOTHING else changed:
+same seed, batch 32, 8 epochs, same rates, same two validation views. Cost 9.2% per step (0.535 s
+against 0.490), about 4.3 min an epoch, not the 11 min I predicted.
+
+**Measured before shipping: EnCodec's output depends on batch SIZE,** by 22-37 dB SNR, because a
+hair of numerical difference at the encoder flips a residual-quantiser code. Checked for leakage
+before accepting it: identical rows give identical output and a clip is unaffected by loud
+neighbours, so there is no cross-talk, and the difference sits 24 dB or more BELOW the degradation
+the codec itself applies. Both are valid realisations of the same codec; a batched crop is not
+bit-identical to the cached view. One bandwidth per call, so the selected clips cost ONE forward --
+per-clip rates cost up to five and about 30 min an epoch. A test asserts that cost property.
+
+**Dev: select 0.0150 at the kept epoch 5, against `lora_probe`'s 0.0172.** Paired on the full split,
+the trade is exactly what harder augmentation should buy: clean 0.0070 against 0.0060 (control
+better, CI [+0.0005, +0.0017]) and codec 0.0224 against 0.0262 (run better, CI [-0.0048, -0.0030]).
+`lora_probe` saturated at epoch 3 and its codec view then drifted WORSE, 0.0278 to 0.0313; here
+codec keeps improving to epoch 5, 0.0365 to 0.0218.
+
+**Eval: 3.31% EER / 0.0942 minDCF / 0.1256 minCllr. The best single system this project has.** Paired
+over all 680,774 clips: -0.0068 against `lora_probe` [-0.0071, -0.0064] and -0.0058 against
+`fullenc_seed1337` [-0.0062, -0.0053]. It also beats the five-member ensemble headline (3.80% /
+0.1046) by 0.49 points, as ONE model.
+
+**The mechanism is confirmed, not merely consistent.** The targeted conditions moved most and clean
+did not move at all.
+
+| condition | lora_probe | lora_enc | change |
+|---|---|---|---|
+| C07 (neural) | 0.0968 | 0.0770 | -20.5% |
+| C04 (neural) | 0.0610 was 0.0771 | 0.0610 | -20.9% |
+| C01 | 0.0235 | 0.0182 | -22.6% |
+| C03 | 0.0312 | 0.0255 | -18.3% |
+| C08 | 0.0582 | 0.0513 | -11.9% |
+| C09 | 0.0327 | 0.0291 | -11.0% |
+| C10 | 0.0516 | 0.0464 | -10.1% |
+| C11 | 0.0138 | 0.0125 | -9.4% |
+| C02 | 0.0168 | 0.0157 | -6.5% |
+| C05 | 0.0075 | 0.0074 | -1.3% |
+| C06 | 0.0118 | 0.0121 | +2.5% |
+| clean | 0.0058 | 0.0058 | 0.0% |
+
+Ten of eleven codecs improved; the two neural ones improved most; clean is unchanged to four
+decimals. The gap to T45 is now 0.72 EER points, down from 1.21.
+
+**And fusion has stopped helping, which REVERSES what I said an hour earlier.**
+
+| eval, 680,774 | best_single | mean | logistic | global_mix | gated |
+|---|---|---|---|---|---|
+| 5 members + lora_probe | 3.99 / .1143 | 3.45 / .0961 | 4.02 / .1152 | 3.99 / .1142 | 4.02 / .1155 |
+| 5 members + lora_enc   | 3.31 / .0942 | 3.35 / .0933 | 3.72 / .1065 | 3.31 / .0941 | 3.31 / .0941 |
+| 5 members + both LoRAs | 3.31 / .0942 | 3.31 / .0922 | 3.84 / .1102 | 3.31 / .0941 | 3.33 / .0946 |
+
+The learned combiners collapse ONTO `lora_enc` -- global mixture 0.995, logistic weight 9.99 -- and
+simply reproduce the single model. The mean buys 0.0020 of minDCF and no EER. The reason is in the
+member list: the band members sit at dev select 0.0433 to 0.1071 against `lora_enc`'s 0.0165, so
+averaging a strong member with five much weaker ones cannot help, and the learned combiners are
+right to discard them. **The band members are now obsolete as ensemble material.**
+
+**What this does and does not say about the 34 h three-member plan.** It does NOT refute it: that
+plan is three `lora_enc`-class members, mutually diverse, which is untested. It DOES refute the
+cheap version -- bolting one strong member onto the existing five. I said an hour ago that this
+result "justifies" the 34 h run; the sharper statement is that an ensemble is only worth building
+from several members of this strength, and nothing here measures whether three such members
+disagree enough to fuse.
+
+**The dev/eval combiner inversion repeats.** Dev select prefers logistic (0.0158, 0.0161) and eval
+punishes it (3.84%, 3.72%), for the third study running. Dev's codecs are simulated; this is the
+same cause as everything else in this entry.
+
+**Robustness unchanged.** Every gradient-bearing attacker still succeeds at 98-100%.
