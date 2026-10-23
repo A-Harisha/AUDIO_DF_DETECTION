@@ -59,13 +59,23 @@ COMBINERS = ("best_single", "mean", "logistic", "global_mix", "gated")
 def read_set(cfg: DictConfig, runs: list[str], name: str, meta_columns: list[str]
              ) -> tuple[pd.DataFrame, np.ndarray]:
     """Aligned member scores and metadata of one score set, with the channel descriptor joined on
-    ``utt``. The join is validated one-to-one: a partial descriptor cache would otherwise silently
-    drop clips from the ensemble but not from the baseline."""
+    ``utt``. The join is validated one-to-one.
+
+    A descriptor that found no score is fatal: that is the asymmetric case this guard was written
+    for, where the ensemble silently sees different clips from the baseline. Scored clips with no
+    descriptor are NOT fatal, because the descriptor cache is built on the feature-cache subset of
+    dev (47,400 of 140,950) while a ``score_only`` run scores the whole partition. Restricting to
+    the cache is uniform -- ``member_scores`` has already intersected every member to one clip set
+    -- and it is the SAME dev clip set every earlier study used, so the numbers stay comparable.
+    The restriction is logged rather than assumed."""
     meta, raw = member_scores(Path(cfg.paths.runs), runs, name, meta_columns)
     desc = descriptor(Path(cfg.paths.features), name)
     merged = meta.assign(_row=np.arange(len(meta))).merge(desc, on="utt", how="inner", validate="one_to_one")
+    if len(merged) != len(desc):
+        raise RuntimeError(f"{name}: {len(desc)} cached descriptors, only {len(merged)} matched a score")
     if len(merged) != len(meta):
-        raise RuntimeError(f"{name}: {len(meta)} scored clips, {len(merged)} with a descriptor")
+        log.info("%s: %d scored clips restricted to the %d with a cached descriptor",
+                 name, len(meta), len(merged))
     return merged.drop(columns="_row"), raw[merged["_row"].to_numpy()]
 
 

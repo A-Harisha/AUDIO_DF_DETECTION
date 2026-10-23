@@ -1603,3 +1603,83 @@ punishes it (3.84%, 3.72%), for the third study running. Dev's codecs are simula
 same cause as everything else in this entry.
 
 **Robustness unchanged.** Every gradient-bearing attacker still succeeds at 98-100%.
+
+## 2026-10-23 -- the fusion route to T45 is closed: diversity and competence are anti-correlated here
+
+**Claim served.** Whether three FINE-TUNED members fuse the way T45's six do (35% relative gain
+against our frozen members' 6%). This was the last untested route to the remaining 0.72 EER points.
+About 22 h: two trainings, two scorings, three fusion studies.
+
+**Members.** `lora_enc` (WavLM + LoRA 16 + encodec_p=0.3, already trained) plus one member per
+diversity axis, seed 1337 throughout:
+  - `lora_enc_xlsr` -- the BACKBONE axis: XLS-R-300M, everything else identical.
+  - `lora_enc_p70` -- the CHANNEL AUGMENTATION axis: encodec_p=0.7, same WavLM backbone.
+
+| member | dev select | eval EER / minDCF | eval clean | C04 | C07 |
+|---|---|---|---|---|---|
+| lora_enc | 0.0150 | **3.31 / .0942** | 0.0058 | 0.0610 | 0.0770 |
+| lora_enc_p70 | 0.0204 | 3.37 / .0955 | 0.0084 | **0.0565** | **0.0739** |
+| lora_enc_xlsr | 0.0245 | 8.67 / .2237 | 0.0717 | 0.1300 | 0.1496 |
+
+**`lora_enc_xlsr` failed, and the backbone is the cause.** Train BCE fell 9x (0.1387 to 0.0120)
+while dev select ROSE from 0.0245 to 0.0521; the kept epoch is 0, an undertrained checkpoint. The
+per-attack rows localise it exactly: six of eight attacks stay at or below 0.002 while A12 goes to
+0.116 and A13 to 0.061. On eval it is 8.67%, paired +0.0536 against `lora_enc` [+0.0529, +0.0543],
+with clean EER 0.0717 against 0.0058 -- twelve times worse. This is the 2026-10-06 failure exactly,
+and that run was ALSO XLS-R + LoRA. **So the 2026-10-16 conclusion that the old failure was about
+data scale is retired: it is the backbone.** WavLM + LoRA shows no trace of this at encodec_p 0,
+0.3 or 0.7, on the same data, the same seed and the same schedule.
+
+**`lora_enc_p70` behaved as the axis predicted, and dev could not see it.** On dev it looked
+uniformly worse than `lora_enc` and I reported it that way. On eval it is BETTER on both neural
+codecs (C04 0.0565 against 0.0610, C07 0.0739 against 0.0770) and worse on clean (0.0084 against
+0.0058), for an overall statistical tie, +0.0006 [+0.0002, +0.0009]. That is the clean-for-codec
+trade the augmentation axis was built to produce. It is the FOURTH time dev's simulated codecs have
+hidden a real channel effect.
+
+**The fusion, eval, 680,774 clips.**
+
+| study | best_single | mean | logistic | global_mix | gated |
+|---|---|---|---|---|---|
+| ens_3member  | 3.31 / .0942 | 3.34 / .0957 | 4.06 / .1176 | 3.31 / .0941 | 3.33 / .0946 |
+| ens_pair_bb  | 3.31 / .0942 | 4.01 / .1156 | 3.64 / .1048 | 3.31 / .0941 | 3.36 / .0955 |
+| ens_pair_aug | 3.31 / .0942 | **3.28 / .0929** | 3.73 / .1057 | 3.31 / .0941 | 3.31 / .0942 |
+
+**The best fusion anywhere is 3.28% / 0.0929, against the single model's 3.31% / 0.0942.** That is
+0.03 EER points and 0.0013 minDCF for 22 hours. The global mixture puts 0.997, 0.997 and 0.999 of
+its weight on `lora_enc` in the three studies: the combiners discard the other members.
+
+**The member correlations explain it, and they are the result worth keeping.**
+
+| study | members | eval correlation | best member | fusion gain |
+|---|---|---|---|---|
+| ens_pair_aug | lora_enc + p70 | **0.994** | 3.31 | 0.03 pts |
+| ens_pair_bb | lora_enc + xlsr | **0.855** | 3.31 | none |
+| ens_bands (2026-10-13) | 4 frozen bands | 0.851 | 4.06 | 0.39 pts |
+
+**In this family, diversity and competence are anti-correlated.** The only member that genuinely
+disagreed with `lora_enc` was the XLS-R one at r=0.855, and it was broken (8.67%). The only member
+that was competent was `lora_enc_p70` at r=0.994 -- a near-duplicate, despite a per-codec profile
+that differs in the right direction. Differing on WHICH conditions you fail is not the same as
+differing on WHICH CLIPS you fail, and only the second feeds a fusion. My prediction that the
+complementary per-codec profile made p70 "the ideal fusion partner" was wrong, and the correlation
+is why.
+
+**Conclusion: the fusion route to T45 is closed.** Three members of this family do not fuse, for a
+measured reason rather than a tuning failure. T45's 35% fusion gain is not reachable by adding more
+members of this kind. Reaching 2.59% would need a member that is both competent AND decorrelated,
+and nothing in this project has produced one -- four layer bands, two SSL backbones, a from-scratch
+raw front end, and now two fine-tuned variants.
+
+**Standing.** Best system: `lora_enc` at **3.31% / 0.0942**, or the pair mean at 3.28% / 0.0929.
+Gap to T45: 0.69 EER points, 0.0179 minDCF. Robustness unchanged at 98-100% attack success.
+
+**The dev/eval combiner inversion repeats for the fifth time.** `ens_3member` dev select prefers
+logistic at 0.0122; on eval logistic is the WORST combiner at 4.06%.
+
+**One bug fixed to run this.** `read_set` required a cached channel descriptor for every scored
+clip. The descriptor cache covers the 47,400 dev clips of the feature cache while a `score_only`
+run scores all 140,950, and earlier studies passed only because a frozen member forced the
+intersection down by accident. A descriptor with no score is still fatal -- that is the asymmetric
+case the guard was written for -- but scored clips with no descriptor are now logged and dropped,
+which is uniform across members and keeps the same dev clip set every earlier study used.
