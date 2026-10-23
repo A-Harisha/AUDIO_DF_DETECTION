@@ -5,7 +5,7 @@ from .block_a_condition import ConditionEncoder
 from .block_b_sae import SparseAutoencoder
 from .block_c_hypernet import CalibrationHypernet, label_probe_eer
 from .block_d_conformal import MondrianConformalGate
-from .detector import CaesdDetector, Head
+from .detector import MHFA, CaesdDetector, Head
 from .film import FiLM
 from .raw_frontend import RawFrontEnd
 
@@ -16,6 +16,7 @@ __all__ = [
     "ConditionEncoder",
     "FiLM",
     "Head",
+    "MHFA",
     "MondrianConformalGate",
     "RawFrontEnd",
     "SparseAutoencoder",

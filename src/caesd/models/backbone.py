@@ -21,15 +21,21 @@ _LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "out_proj"]
 
 
 class Backbone(nn.Module):
-    def __init__(self, model: nn.Module, feature_dim: int) -> None:
+    def __init__(self, model: nn.Module, feature_dim: int, pooled: bool = True) -> None:
         super().__init__()
         self.model = model
         self.feature_dim = feature_dim
         self.n_layers = model.config.num_hidden_layers + 1  # + the CNN output
+        # pooled=False returns the FRAMES instead of their time-mean, for a back-end that models
+        # time. It is a separate mode rather than the default because the time-mean is what makes
+        # the feature cache possible: un-pooled, the 34.8 GB eval cache would be about 870 GB, so a
+        # frame back-end always runs with the backbone in the loop (experiment.features=false).
+        self.pooled = pooled
 
     @classmethod
     def from_pretrained(
-        cls, name: str = DEFAULT_XLSR, freeze: bool = True, lora_rank: int = 0
+        cls, name: str = DEFAULT_XLSR, freeze: bool = True, lora_rank: int = 0,
+        pooled: bool = True,
     ) -> Backbone:
         from transformers import AutoModel
 
@@ -44,7 +50,7 @@ class Backbone(nn.Module):
 
             cfg = LoraConfig(r=lora_rank, lora_alpha=lora_rank * 2, target_modules=_LORA_TARGETS)
             model = get_peft_model(model, cfg)
-        return cls(model, feature_dim)
+        return cls(model, feature_dim, pooled=pooled)
 
     @classmethod
     def tiny(cls, feature_dim: int = 32) -> Backbone:
@@ -66,7 +72,8 @@ class Backbone(nn.Module):
         )
         return cls(Wav2Vec2Model(cfg), feature_dim)
 
-    def forward(self, wave: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+    def forward(self, wave: torch.Tensor, lengths: torch.Tensor):
+        """pooled: [B, L, D]. Un-pooled: ([B, L, T, D], frame mask [B, T])."""
         mask = torch.arange(wave.shape[1], device=wave.device)[None] < lengths[:, None]
         # Per-utterance zero-mean, unit-variance input over the valid samples (the SSL front ends
         # were pretrained with this normalisation).
@@ -77,5 +84,9 @@ class Backbone(nn.Module):
         hidden = self.model(wave, attention_mask=mask, output_hidden_states=True).hidden_states
         frames = self.model._get_feat_extract_output_lengths(lengths)
         frame_mask = torch.arange(hidden[0].shape[1], device=wave.device)[None] < frames[:, None]
+        if not self.pooled:
+            # [B, L, T, D] with the frame validity mask [B, T]: the back-end does its own pooling
+            # and MUST use the mask, or it would attend to the padding.
+            return torch.stack(hidden, dim=1), frame_mask
         frame_mask = frame_mask[:, :, None].to(hidden[0].dtype)
         return torch.stack([(h * frame_mask).sum(1) / frames[:, None] for h in hidden], dim=1)
