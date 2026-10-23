@@ -24,13 +24,17 @@ from torch.utils.data import DataLoader
 
 from caesd.data.augment import CodecAugment, RawBoost
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, FeatureLoader, collate, seed_worker
-from caesd.models import MHFA, Backbone, CaesdDetector, Head, RawFrontEnd
+from caesd.models import (MHFA, Backbone, CaesdDetector, Head, LayerTimeGraph,
+                          LFCCHybrid, RawFrontEnd)
 from caesd.train.loop import fit, load_trainable_state, predict
 from caesd.utils.logging import get_logger, log_hparams, write_json
 from caesd.utils.seed import set_seed
 
 log = get_logger("caesd.train.cli")
 _SCORE_COLUMNS = ["utt", "label", "split", "speaker", "codec", "codec_q", "generator", "sim_codec"]
+# Back-ends that consume the backbone FRAMES rather than their time-mean. They cannot run on the
+# cached features, because the cache IS the time-mean: un-pooled it would be about 870 GB.
+FRAME_BACKENDS = {"mhfa": MHFA, "lfcc": LFCCHybrid, "graph": LayerTimeGraph}
 
 
 def feature_set(cfg: DictConfig, name: str, split: str | None = None) -> tuple[torch.Tensor, pd.DataFrame]:
@@ -117,12 +121,13 @@ def main(cfg: DictConfig) -> None:
             run_dir.mkdir(parents=True)  # raises if the run exists: results are never overwritten
             write_json(run_dir / "config.json", head_config(resolved, head))
         run_dirs[head["name"]] = run_dir
-    if exp.backend not in ("head", "mhfa"):
-        raise ValueError(f"experiment.backend {exp.backend!r} is not head or mhfa")
-    if exp.backend == "mhfa" and exp.features:
-        raise ValueError("backend=mhfa needs the backbone FRAMES; a cached-feature run only has "
-                         "their time-mean, and caching frames would turn the 34.8 GB eval cache "
-                         "into about 870 GB. Use experiment.features=false.")
+    if exp.backend != "head" and exp.backend not in FRAME_BACKENDS:
+        raise ValueError(f"experiment.backend {exp.backend!r} is not head or one of "
+                         f"{sorted(FRAME_BACKENDS)}")
+    if exp.backend in FRAME_BACKENDS and exp.features:
+        raise ValueError(f"backend={exp.backend} needs the backbone FRAMES; a cached-feature run "
+                         "only has their time-mean, and caching frames would turn the 34.8 GB eval "
+                         "cache into about 870 GB. Use experiment.features=false.")
     if exp.encodec_p > 0.0 and exp.features:
         raise ValueError("encodec_p augments waveforms in the training loop; a cached-feature run "
                          "gets the neural codec from its 'encodec' view instead")
@@ -158,10 +163,11 @@ def main(cfg: DictConfig) -> None:
         else:
             backbone = Backbone.from_pretrained(cfg.backbone.name, freeze=not exp.unfreeze,
                                                 lora_rank=exp.lora_rank, pooled=exp.backend == "head")
-        if exp.backend == "mhfa":
-            # The frames, not their mean: the backbone returns ([B, L, T, D], mask) and MHFA pools.
-            model = CaesdDetector(backbone, MHFA(backbone.n_layers, backbone.feature_dim,
-                                                 dropout=exp.dropout))
+        if exp.backend in FRAME_BACKENDS:
+            # The frames, not their mean: the backbone returns ([B, L, T, D], mask) and the
+            # back-end does its own masked pooling.
+            model = CaesdDetector(backbone, FRAME_BACKENDS[exp.backend](
+                backbone.n_layers, backbone.feature_dim, dropout=exp.dropout))
         else:
             model = CaesdDetector(backbone, Head(backbone.n_layers, backbone.feature_dim,
                                                  dropout=exp.dropout, n_channels=n_channels, band=band))
@@ -185,10 +191,13 @@ def main(cfg: DictConfig) -> None:
                    backbone_lr=exp.backbone_lr, weight_decay=exp.weight_decay, patience=exp.patience,
                    cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window,
                    adv_eps=exp.adv_eps, adv_steps=exp.adv_steps, encodec_p=exp.encodec_p)
-        if exp.backend == "mhfa":
-            # Two weightings, so both are logged: where it looks and what it reads.
-            best["key_layer_weights"] = torch.softmax(model.head.key_logits, 0).tolist()
-            best["value_layer_weights"] = torch.softmax(model.head.value_logits, 0).tolist()
+        if exp.backend in FRAME_BACKENDS:
+            # Whatever layer weightings this back-end learned. MHFA is factorized and has two --
+            # where it looks and what it reads -- so every one is logged by its own name.
+            for attr in ("layer_logits", "key_logits", "value_logits"):
+                logits = getattr(model.head, attr, None)
+                if logits is not None:
+                    best[f"weights_{attr}"] = torch.softmax(logits, 0).tolist()
         else:
             # band_mask included: without it the logged weights are not the ones the head used.
             best["layer_weights"] = torch.softmax(model.head.layer_logits + model.head.band_mask, 0).tolist()
