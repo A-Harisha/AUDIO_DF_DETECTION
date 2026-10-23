@@ -1683,3 +1683,90 @@ run scores all 140,950, and earlier studies passed only because a frozen member 
 intersection down by accident. A descriptor with no score is still fatal -- that is the asymmetric
 case the guard was written for -- but scored clips with no descriptor are now logged and dropped,
 which is uniform across members and keeps the same dev clip set every earlier study used.
+
+## 2026-10-24 -- the shared VIEW was the bottleneck, not the members: 3.21% / 0.0905
+
+**This partly falsifies the previous entry.** 2026-10-23 concluded "the fusion route to T45 is
+closed" from three fine-tuned members that would not fuse. That conclusion was too broad. What was
+closed was fusing members that share one VIEW of the features; it said nothing about members that
+see the features differently, because no such member existed yet. The title of commit d506bf8
+overstates its own evidence.
+
+**Claim served.** Whether the ensemble's dead end came from the members or from the single
+impoverished representation all of them consumed.
+
+**The mechanism.** `backbone.py` time-averaged every hidden layer, so a 4 s clip's 199 frames became
+one point and nothing in the model saw time. All six members ever built sat on that one view and
+differed only in WHICH layers they averaged. `Backbone(pooled=False)` now returns
+([B, L, T, D], frame mask); the pooled path is byte-identical and a test asserts it. Frames are not
+cacheable -- un-pooled, the 34.8 GB eval cache would be about 870 GB -- so `backend=mhfa` refuses
+`features=true` with that reason rather than failing later.
+
+**`lora_mhfa` is `lora_enc` with ONE change, `experiment.backend=mhfa`:** multi-head factorized
+attentive pooling, which learns WHERE in the clip to look, with two separate layer weightings so
+the layers that say where to look need not be the layers carrying the evidence. Head 0.53M params
+against `Head`'s 0.26M. Everything else held: WavLM-Large, LoRA 16, encodec_p=0.3, batch 32, 8
+epochs, seed 1337, same two validation views. 6.8 h, exit 0, no memorisation.
+
+**Dev: best epoch 4, select 0.0207 against `lora_enc`'s 0.0150 -- 38% WORSE.** The curve was noisier
+than `lora_enc`'s, bouncing up at epochs 2 and 5, and the final anneal gave nothing.
+
+**Eval alone: 3.44% / 0.0957,** also worse than `lora_enc`'s 3.31% / 0.0942.
+
+**THE GATE WAS CORRELATION, AND IT PASSED: eval r = 0.917.**
+
+| pair | eval r | member EER | fusion gain |
+|---|---|---|---|
+| lora_enc + lora_mhfa | **0.917** | 3.44 | **0.10 pts** |
+| lora_enc + lora_enc_p70 | 0.994 | 3.37 | 0.03 pts |
+| lora_enc + lora_enc_xlsr | 0.855 | 8.67 (broken) | none |
+| four frozen bands | 0.851 | 4.06 | 0.39 pts |
+
+**Result: the unweighted mean of `lora_enc` and `lora_mhfa` scores 3.21% EER / 0.0905 minDCF --
+the project's best on BOTH metrics.**
+
+| eval, 680,774 | best_single | mean | logistic | global_mix | gated |
+|---|---|---|---|---|---|
+| EER | 3.31 | **3.21** | 3.23 | 3.31 | 3.31 |
+| minDCF | .0942 | **.0905** | .0915 | .0942 | .0942 |
+
+**And for the first time the protocol picks it.** Dev select also ranks the mean first, 0.0156
+against best_single's 0.0165. The dev/eval combiner inversion held in FIVE consecutive studies --
+ens_2view_lora, ens_2view_enc, ens_2view_both, ens_3member, ens_pair_aug -- and is broken here. So
+3.21% needs no caveat about how the combiner was chosen, unlike the old 3.80% headline.
+
+**Why it worked, and the distinction I got wrong before.** The two members fail on different CLIPS,
+not merely different conditions:
+
+| condition | lora_enc | lora_mhfa |
+|---|---|---|
+| clean | **0.0058** | 0.0096 |
+| C04 (neural) | 0.0610 | **0.0572** |
+| C07 (neural) | 0.0770 | **0.0690** |
+| C08 (narrowband) | **0.0513** | 0.0579 |
+
+`lora_enc_p70` ALSO had a complementary per-codec profile and still correlated at 0.994. I called it
+"the ideal fusion partner" on that basis and was wrong. Differing on which conditions you fail is
+not differing on which clips you fail; only a different VIEW produces the second.
+
+**A prediction I got wrong, in the useful direction.** Asked before the result, I put a meaningful
+gain at "roughly one in four", estimated r at 0.95-0.98, and expected 0.00-0.05 points. The
+reasoning was that MHFA consumes the same features, the same LoRA adaptation and the same data, so
+"the information bottleneck is identical". That was wrong: discarding ALL temporal structure was a
+larger loss than I credited, and one extra member bought three times what the whole 22 h
+three-member run did.
+
+**Standing.** Best: mean of `lora_enc` + `lora_mhfa`, **3.21% / 0.0905**, dev-selected. Gap to T45
+(2.59% / 0.0750): 0.62 EER points, down from 0.72, and from 1.21 when the LoRA line began.
+Robustness untouched at 98-100% attack success.
+
+**What this licenses, now on evidence rather than hope.** The back-end axis is live, so the two
+remaining back-ends are worth their ~12 h each, and both change MORE than the pooling:
+  - an LFCC hybrid, which changes the REPRESENTATION;
+  - an AASIST-style graph-attention back-end (reference code at F:/datasets/audio/aasist).
+A separate and possibly larger lever stays untouched: T45 trains on ASVspoof 2021 LA+DF, their own
+business data and VITS-synthesised fakes. We train on one corpus. That is four datasets against our
+one, and it is not an architecture problem.
+
+**Also still open.** README.md reports 3.80% and a combiner protocol it did not follow (2026-10-19).
+The headline is now 3.21%, so the file is wrong on the number, the system and the protocol.
