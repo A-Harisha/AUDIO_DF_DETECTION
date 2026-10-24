@@ -24,17 +24,28 @@ log = get_logger("caesd.train")
 
 
 @torch.no_grad()
-def predict(model: CaesdDetector, loader: Iterable[dict], device: str) -> pd.DataFrame:
+def predict(model: CaesdDetector, loader: Iterable[dict], device: str, transform=None) -> pd.DataFrame:
     """Score every item of ``loader``. Returns idx, score, the true channel index, and the
-    predicted channel when block A is on."""
+    predicted channel when block A is on.
+
+    ``transform(x, lengths, channel, idx) -> (x, channel)`` runs on the device before the model. It
+    exists for the ``encodec`` view, whose neural codec cannot run in the DataLoader workers: on CPU
+    it took minutes per batch and died (2026-10-09). It may relabel the channel, because a clip that
+    went through MP3 first is eval C07 and the rest are C04.
+    """
     model.eval()
     idx, score, channel, channel_pred = [], [], [], []
     for batch in loader:
+        x = batch["x"].to(device)
+        lengths = None if batch["lengths"] is None else batch["lengths"].to(device)
+        chan = batch["channel"].to(device)
+        if transform is not None:
+            x, chan = transform(x, lengths, chan, batch["idx"].numpy())
         with torch.autocast("cuda", dtype=torch.float16):
-            out = model(batch["x"].to(device), None if batch["lengths"] is None else batch["lengths"].to(device))
+            out = model(x, lengths)
         idx.append(batch["idx"].cpu().numpy())
         score.append(out["score"].float().cpu().numpy())
-        channel.append(batch["channel"].cpu().numpy())
+        channel.append(chan.cpu().numpy())
         if out["channel_logits"] is not None:
             channel_pred.append(out["channel_logits"].argmax(-1).cpu().numpy())
     frame = pd.DataFrame({"idx": np.concatenate(idx), "score": np.concatenate(score),

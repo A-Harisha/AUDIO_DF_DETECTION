@@ -23,6 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from caesd.data.augment import CodecAugment, RawBoost
+from caesd.data.condition_grid import encodec_view
 from caesd.data.datasets import CODEC_NAMES, AudioDataset, FeatureLoader, collate, seed_worker
 from caesd.models import (MHFA, Backbone, CaesdDetector, Head, LayerTimeGraph,
                           LFCCHybrid, RawFrontEnd)
@@ -62,7 +63,11 @@ def audio_set(cfg: DictConfig, name: str, split: str | None = None, n: int | Non
     if n is not None:
         meta = meta.sample(n, random_state=cfg.seed)
     meta = meta.reset_index(drop=True)
-    dataset = AudioDataset(meta, cfg.data.max_seconds, codec=CodecAugment() if view == "codec" else None)
+    # view=encodec: the workers do MP3 on half the clips (eval C07) and EnCodec runs on the GPU in
+    # predict(), exactly as extract_features builds the cached view.
+    codec = (CodecAugment() if view == "codec"
+             else CodecAugment(p=0.5, codecs=("mp3_wb",)) if view == "encodec" else None)
+    dataset = AudioDataset(meta, cfg.data.max_seconds, codec=codec)
     order = np.argsort(-meta["size"].to_numpy(), kind="stable")
     bs = cfg.data.extract_batch_size
     loader = DataLoader(dataset, batch_sampler=[order[i : i + bs].tolist() for i in range(0, len(order), bs)],
@@ -213,8 +218,9 @@ def main(cfg: DictConfig) -> None:
             loader = feature_loader(sx, meta, 4096)
         else:
             loader, meta = audio_set(cfg, name)
+        transform = encodec_view if (not exp.features and name.endswith("_encodec")) else None
         for run_name, head_model in trained.items():
-            scores = predict(head_model, loader, cfg.device)
+            scores = predict(head_model, loader, cfg.device, transform=transform)
             row = meta.copy()
             row["sim_codec"] = np.asarray(CODEC_NAMES)[scores.pop("channel").to_numpy()]
             out = row[_SCORE_COLUMNS].assign(**scores.drop(columns="idx"))

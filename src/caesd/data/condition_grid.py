@@ -160,6 +160,36 @@ def encodec_batch(wave, channel, p: float, lengths=None, sr: int = TARGET_SR):
     return out, new
 
 
+def encodec_view(wave, lengths, channel, idx, sr: int = TARGET_SR):
+    """The ``encodec`` SCORING view: EnCodec at a per-clip bandwidth, with the channel relabelled.
+
+    Built the same way as the cached view in ``scripts/extract_features.py``: the DataLoader workers
+    put half the clips through ``mp3_wb`` first, which is eval C07, and the rest become C04.
+
+    Deterministic by construction. Each clip's bandwidth comes from its own MANIFEST INDEX, not from
+    a batch-level draw, so this is a fixed dataset rather than an augmentation and a run scored
+    twice gives the same numbers. One EnCodec forward per distinct bandwidth in the batch.
+
+    It is not bit-identical to the cached view, which encodes each clip on its own: EnCodec's output
+    depends on batch SIZE by 22-37 dB SNR, which is 24 dB or more below the degradation the codec
+    itself applies (see ``encodec_batch``). Scoring per clip instead would cost about 2.2 h per
+    member against 1 h.
+    """
+    import torch
+
+    names = ("clean", *CODECS, *NEURAL_CODECS)
+    rates = np.array([float(ENCODEC_KBPS[np.random.default_rng(int(i)).integers(5)]) for i in idx])
+    out = wave.clone()
+    for rate in np.unique(rates):
+        sel = torch.as_tensor(np.flatnonzero(rates == rate), device=wave.device)
+        out[sel] = encodec(wave[sel], float(rate), sr).to(out.dtype)
+    if lengths is not None:  # EnCodec also "decodes" the zero padding; put the zeros back
+        out = out * (torch.arange(wave.shape[1], device=wave.device)[None] < lengths[:, None])
+    relabelled = torch.where(channel == 0, names.index("encodec_wb"),
+                             names.index("mp3_encodec_wb"))
+    return out, relabelled
+
+
 def add_noise(wave: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
     """Mix additive noise at a target SNR (dB)."""
     noise = _match_length(noise, wave.size)
