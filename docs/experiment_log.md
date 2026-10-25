@@ -1770,3 +1770,71 @@ one, and it is not an architecture problem.
 
 **Also still open.** README.md reports 3.80% and a combiner protocol it did not follow (2026-10-19).
 The headline is now 3.21%, so the file is wrong on the number, the system and the protocol.
+
+
+## 2026-10-25 -- the view axis is exhausted and the dev split cannot select these systems
+
+**Claim served.** Two questions, both now answered and both negatively. Does a second TOPOLOGY add a
+member worth having? And can a dev select set that contains a neural codec rank these member sets
+correctly?
+
+**Result 1: `lora_graph` is the worst member and contributes nothing.** Graph attention over time
+slots and backbone layers, AASIST's GraphAttentionLayer with a layer sub-graph in place of the
+spectral one. One variable against `lora_enc`. Dev select 0.0287 (worst of four), eval **3.93% /
+0.1091** (worst of four). Adding it to the dev-chosen pair moves eval from 3.21% to 3.20%, which is
+nothing.
+
+The PCA diagnostic says why, and it is the test proposed before the result was read: its PC1 loading
+is **0.502** against 0.501, 0.496 and 0.501 for the other three, and its correlation with `lora_enc`
+is **0.943**. It is another hat on the same system. **The topology axis is closed.**
+
+**Result 2: four members are 1.10 effective systems.**
+
+| members | PC1 var | effective systems | best fusion |
+|---|---|---|---|
+| enc, mhfa, lfcc | 95.6% | 1.09 of 3 | 2.93% |
+| + graph | 95.5% | **1.10 of 4** | 2.93% |
+
+Adding a fourth member raised the effective rank by 0.01. The 0.10 EER points MHFA bought came from
+3.2% of the variance; that is how little disagreement it takes to matter and how little we have.
+T45 fuses 12 systems over three back-end families -- the gap is not member COUNT, it is that ours
+are nearly the same system.
+
+**Result 3: the dev `encodec` view helps the ranking and does not fix it.** 140,950 dev clips per
+member scored through the new view, 4.9 h. Rank correlation between dev select and eval EER over all
+15 subsets:
+
+| selection views | spearman | p | best eval system's dev rank |
+|---|---|---|---|
+| clean, codec | **+0.011** | 0.97 | 7 of 15 |
+| clean, codec, encodec | **+0.261** | 0.35 | 6 of 15 |
+
+The neural codec moved `enc+mhfa+lfcc` from rank 4 to rank **2**, so the view does carry real
+information. But +0.261 over 15 points is not distinguishable from zero, and dev still selects
+`enc+mhfa`. **The headline stays 3.21% / 0.0905.**
+
+**So 2.93% / 0.0819 remains REAL AND NOT CLAIMABLE.** It is `enc+lfcc`, dev rank 6 of 15. The
+selection set costs 0.0028 EER points, and `scripts/select_members.py` prints that line on every run
+rather than hiding it. This is the same fault as the retired 3.80% headline, one level up: there the
+combiner was chosen off eval, here the member set would be.
+
+**The honest conclusion, which is a result rather than a failure.** This dev split cannot select
+these systems. Its conditions are clean plus simulated codecs; eval's discriminating conditions are
+real neural codecs at 6-8% EER against 0.6% clean. A member whose evidence is cepstral generalises
+to real channels in a way no simulated view predicts, and `lora_lfcc` demonstrates it: ranked 15th
+of 15 on two views, 14th on three, and the best SINGLE member on eval at 3.11%.
+
+**What that implies for the next move, and it is not another member.** Four members, three
+architectural axes (pooling, representation, topology) and two backbones have produced 1.10
+effective systems. Nothing in the architecture family decorrelates. The two levers that remain are
+both about DATA, not models:
+  - a selection set that contains the conditions eval discriminates on. The real codecs we cannot
+    simulate are C11 (devices) and whatever the crowdsourced recordings carry; ASVspoof 2021 LA+DF
+    would supply genuinely different channels AND more training supervision.
+  - more training corpora. T45 trains on four; we train on one. That is the single largest
+    difference between the two systems and it is not an architecture problem.
+
+**Standing.** Claimable headline **3.21% EER / 0.0905 minDCF** (`enc+mhfa`, dev-selected on both
+two and three views, paired against the dev-chosen single member at d_EER CI [-0.0012, -0.0008]).
+Best measured system 2.93% / 0.0819, not selectable. Gap to T45: 0.62 points claimable, 0.34
+measured. Robustness untouched at 98-100% attack success.
