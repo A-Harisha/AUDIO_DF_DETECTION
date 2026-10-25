@@ -133,6 +133,10 @@ def main(cfg: DictConfig) -> None:
         raise ValueError(f"backend={exp.backend} needs the backbone FRAMES; a cached-feature run "
                          "only has their time-mean, and caching frames would turn the 34.8 GB eval "
                          "cache into about 870 GB. Use experiment.features=false.")
+    if exp.wav_adv_snr > 0.0 and exp.features:
+        raise ValueError("wav_adv_snr perturbs the WAVEFORM and backpropagates through the "
+                         "backbone; a cached-feature run has no backbone in the graph. That "
+                         "mismatch is what made the 2026-10-16 feature-space probe unanswerable.")
     if exp.encodec_p > 0.0 and exp.features:
         raise ValueError("encodec_p augments waveforms in the training loop; a cached-feature run "
                          "gets the neural codec from its 'encodec' view instead")
@@ -195,7 +199,9 @@ def main(cfg: DictConfig) -> None:
         best = fit(model, train_loader, val, run_dir, epochs=exp.epochs, lr=exp.lr,
                    backbone_lr=exp.backbone_lr, weight_decay=exp.weight_decay, patience=exp.patience,
                    cond_weight=exp.cond_weight, device=cfg.device, select_window=exp.select_window,
-                   adv_eps=exp.adv_eps, adv_steps=exp.adv_steps, encodec_p=exp.encodec_p)
+                   adv_eps=exp.adv_eps, adv_steps=exp.adv_steps, encodec_p=exp.encodec_p,
+                   wav_adv_snr=exp.wav_adv_snr, wav_adv_steps=exp.wav_adv_steps,
+                   wav_adv_fraction=exp.wav_adv_fraction)
         if exp.backend in FRAME_BACKENDS:
             # Whatever layer weightings this back-end learned. MHFA is factorized and has two --
             # where it looks and what it reads -- so every one is logged by its own name.

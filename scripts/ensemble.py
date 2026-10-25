@@ -56,6 +56,27 @@ log = get_logger("caesd.ensemble")
 COMBINERS = ("best_single", "mean", "logistic", "global_mix", "gated")
 
 
+def effective_rank(z: np.ndarray) -> dict:
+    """How many INDEPENDENT systems a member set is really worth.
+
+    A mean off-diagonal correlation hides what matters. These two do not: the participation ratio
+    of the correlation eigenvalues, and their entropy, both of which fall to 1 when every member is
+    the same system and rise to M when they are orthogonal. Measured on 2026-10-25, four members
+    across three architectural axes and two backbones came to 1.10 effective systems of 4, with the
+    first component carrying 95.5% of the variance and every PC1 loading within 0.006 of 0.50 --
+    which is why fusing them gains almost nothing. The 0.10 EER points MHFA bought came from 3.2%
+    of the variance, so this is the scale that decides a fusion.
+    """
+    corr = np.corrcoef(z.T)
+    w = np.clip(np.linalg.eigvalsh(corr)[::-1], 1e-12, None)
+    share = w / w.sum()
+    return {"eigenvalues": np.round(w, 4).tolist(),
+            "variance_share": np.round(share, 4).tolist(),
+            "participation_ratio": float(w.sum() ** 2 / (w ** 2).sum()),
+            "entropy_rank": float(np.exp(-(share * np.log(share)).sum())),
+            "pc1_loadings": np.round(np.linalg.eigh(corr)[1][:, -1], 3).tolist()}
+
+
 def read_set(cfg: DictConfig, runs: list[str], name: str, meta_columns: list[str]
              ) -> tuple[pd.DataFrame, np.ndarray]:
     """Aligned member scores and metadata of one score set, with the channel descriptor joined on
@@ -184,8 +205,13 @@ def main(cfg: DictConfig) -> None:
         corr = np.corrcoef(z.T)
         off = float((corr.sum() - len(runs)) / (len(runs) ** 2 - len(runs)))
         results[f"correlation_{part}"] = {"runs": runs, "matrix": np.round(corr, 4).tolist(), "mean_offdiag": off}
-        log.info("%s member correlation: mean off-diagonal %.3f\n%s", part, off,
-                 pd.DataFrame(np.round(corr, 3), index=runs, columns=range(len(runs))).to_string())
+        rank = effective_rank(z)
+        results[f"effective_rank_{part}"] = rank
+        log.info("%s member correlation: mean off-diagonal %.3f | effective systems %.2f of %d "
+                 "(entropy rank %.2f, PC1 holds %.1f%% of the variance)", part, off,
+                 rank["participation_ratio"], len(runs), rank["entropy_rank"],
+                 100 * rank["variance_share"][0])
+        log.info("%s", pd.DataFrame(np.round(corr, 3), index=runs, columns=range(len(runs))).to_string())
 
     # --- dev select: the only place a combiner may be chosen ---
     dev_out = dev.drop(columns="z").assign(**combine(dev_z, z_dev))
@@ -200,7 +226,14 @@ def main(cfg: DictConfig) -> None:
     corr = np.corrcoef(ev_z.T)
     results["correlation_eval"] = {"runs": runs, "matrix": np.round(corr, 4).tolist(),
                                    "mean_offdiag": float((corr.sum() - len(runs)) / (len(runs) ** 2 - len(runs)))}
-    log.info("eval member correlation: mean off-diagonal %.3f", results["correlation_eval"]["mean_offdiag"])
+    results["effective_rank_eval"] = effective_rank(ev_z)
+    log.info("eval member correlation: mean off-diagonal %.3f | effective systems %.2f of %d "
+             "(entropy rank %.2f, PC1 holds %.1f%% of the variance) | PC1 loadings %s",
+             results["correlation_eval"]["mean_offdiag"],
+             results["effective_rank_eval"]["participation_ratio"], len(runs),
+             results["effective_rank_eval"]["entropy_rank"],
+             100 * results["effective_rank_eval"]["variance_share"][0],
+             dict(zip(runs, results["effective_rank_eval"]["pc1_loadings"], strict=True)))
     log.info("== eval, pooled | combiners %s | SOTA to beat: 2.59%% EER / 0.0750 minDCF", COMBINERS)
     results["eval_pooled"] = report(ev_out.assign(all="all"), "all", n_boot, cfg.seed)["all"]
     log.info("== eval, per real codec (C04 and C07 are the neural ones, C11 is devices)")

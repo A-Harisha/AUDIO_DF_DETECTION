@@ -109,3 +109,55 @@ def test_feature_pgd_rejects_zero_steps() -> None:
         assert "steps" in str(exc)
     else:
         raise AssertionError("zero steps was accepted; no perturbation would be crafted")
+
+
+def test_adversarial_batch_aims_each_clip_at_its_wrong_class_and_spends_the_budget() -> None:
+    """Adversarial training is only as good as the examples it trains on: a perturbation aimed the
+    wrong way trains on nothing, and one that misses its budget trains on an attack nobody faces.
+    pgd's default step size is sized for a 30-step measurement attack and reaches only 0.45 of the
+    budget in 3 steps, so the step size is asserted through the realised SNR."""
+    from caesd.attacks import adversarial_batch
+
+    torch.manual_seed(0)
+    wave = torch.randn(32, 1000)
+    lengths = torch.full((32,), 1000)
+    label = torch.arange(32) % 2
+    weight = torch.randn(1000)
+    score_fn = lambda w, n: w @ weight  # noqa: E731
+
+    before = score_fn(wave, lengths)
+    out = adversarial_batch(score_fn, wave, lengths, label, snr_db=30.0, steps=3, fraction=1.0)
+    moved = score_fn(out, lengths) - before
+    assert torch.all(moved[label == 1] < 0), "bona fide clips were not pushed towards spoof"
+    assert torch.all(moved[label == 0] > 0), "spoof clips were not pushed towards bona fide"
+    realised = snr_db(wave, out, lengths)
+    assert torch.all((realised > 29.0) & (realised < 31.0)), realised[:4]
+
+
+def test_adversarial_batch_leaves_most_of_the_batch_alone_at_a_half_fraction() -> None:
+    from caesd.attacks import adversarial_batch
+
+    torch.manual_seed(7)
+    wave = torch.randn(400, 200)
+    weight = torch.randn(200)
+    out = adversarial_batch(lambda w, n: w @ weight, wave, torch.full((400,), 200),
+                            torch.arange(400) % 2, snr_db=30.0, steps=3, fraction=0.5)
+    touched = (~torch.isclose(out, wave).all(dim=1)).float().mean()
+    assert 0.42 < touched < 0.58, touched
+    # and the untouched clips are untouched exactly, not merely nearly
+    keep = torch.isclose(out, wave).all(dim=1)
+    assert torch.equal(out[keep], wave[keep])
+
+
+def test_adversarial_batch_rejects_a_fraction_or_snr_that_means_nothing() -> None:
+    from caesd.attacks import adversarial_batch
+
+    wave, lengths = torch.randn(4, 100), torch.full((4,), 100)
+    label, fn = torch.tensor([0, 1, 0, 1]), lambda w, n: w.sum(1)
+    for kwargs, pattern in ((dict(fraction=0.0), "fraction"), (dict(snr_db=0.0), "snr_db")):
+        try:
+            adversarial_batch(fn, wave, lengths, label, **{"snr_db": 30.0, **kwargs})
+        except ValueError as exc:
+            assert pattern in str(exc)
+        else:
+            raise AssertionError(f"{kwargs} was accepted")

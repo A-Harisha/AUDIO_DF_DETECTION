@@ -16,7 +16,7 @@ import torch
 from ..metrics import compute_eer, min_dcf
 from ..models.detector import CaesdDetector
 from ..utils.logging import get_logger
-from ..attacks import feature_pgd
+from ..attacks import adversarial_batch, feature_pgd
 from ..data.condition_grid import encodec_batch
 from .losses import detection_loss
 
@@ -108,6 +108,9 @@ def fit(
     adv_eps: float = 0.0,
     adv_steps: int = 3,
     encodec_p: float = 0.0,
+    wav_adv_snr: float = 0.0,
+    wav_adv_steps: int = 3,
+    wav_adv_fraction: float = 0.5,
 ) -> dict:
     """Train; after every epoch validate, append to ``metrics.jsonl`` and keep the best checkpoint.
 
@@ -123,6 +126,12 @@ def fit(
     the one augmentation a features=false run cannot get from its DataLoader workers, and eval's two
     hardest conditions for a fine-tuned model are exactly the neural codecs (2026-10-17). Off by
     default, so no existing run changes.
+
+    ``wav_adv_snr`` > 0 turns on WAVEFORM adversarial training: that fraction of each batch is
+    first replaced by white-box PGD examples at that SNR, crafted through the backbone. This is the
+    last untried robustness route -- a single model, four layer bands, two SSL backbones and
+    feature-space hardening all left any gradient-bearing attacker at 98-100% success. It costs
+    about 2.5x a normal epoch at the default 3 steps on half the batch.
 
     ``adv_eps`` > 0 turns on feature-space adversarial training: every batch is first pushed towards
     its wrong class inside an L2 ball of ``adv_eps`` times that clip's own feature norm. It hardens
@@ -153,6 +162,13 @@ def fit(
             channel = batch["channel"].to(device)
             if encodec_p > 0.0:
                 x, channel = encodec_batch(x, channel, encodec_p, lengths)
+            if wav_adv_snr > 0.0:
+                # Crafted in eval mode and in float32: dropout would make the gradient a sample of
+                # a random network, and a normalised gradient direction underflows in float16.
+                model.eval()
+                x = adversarial_batch(lambda w, n: model(w, n)["score"].float(), x, lengths, y,
+                                      wav_adv_snr, wav_adv_steps, wav_adv_fraction)
+                model.train()
             if adv_eps > 0.0:
                 # Feature-space adversarial training. Crafted in float32 outside autocast: the
                 # perturbation direction is a normalised gradient and float16 loses it to underflow.

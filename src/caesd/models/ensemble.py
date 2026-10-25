@@ -50,6 +50,9 @@ def load_member(run_dir: Path, backbone: Backbone, device: str) -> tuple[Head, d
     # A trained-from-scratch front end is in the SAME checkpoint under "backbone.", because it is
     # trainable and ``trainable_state`` saves every parameter that requires grad. A frozen SSL
     # backbone contributes no such keys, so this is how the two cases are told apart.
+    # A from-scratch front end and a LoRA adapter are BOTH in this checkpoint under "backbone.",
+    # because trainable_state saves every parameter that requires grad. A frozen SSL backbone
+    # contributes no such keys, which is how the cases are told apart.
     body = {k.removeprefix("backbone."): v for k, v in state.items() if k.startswith("backbone.")}
     if body:
         load_trainable_state(backbone, body)
@@ -97,8 +100,13 @@ class ScoreEnsemble(nn.Module):
             run_dir = runs_dir / run
             cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
             tag, name = cfg["backbone"]["tag"], cfg["backbone"]["name"]
-            if cfg["experiment"]["lora_rank"] or cfg["experiment"]["unfreeze"]:
-                raise NotImplementedError(f"{run}: the ensemble path assumes a frozen SSL backbone")
+            exp = cfg["experiment"]
+            if exp["unfreeze"]:
+                raise NotImplementedError(f"{run}: a fully fine-tuned backbone is not loaded here")
+            if exp.get("backend", "head") != "head":
+                raise NotImplementedError(
+                    f"{run}: the {exp['backend']} back-end consumes backbone FRAMES, and this path "
+                    "shares one POOLED pass between members")
             if name == "raw":
                 # A from-scratch front end carries its OWN weights, so two raw runs are two
                 # different front ends and must not share a cache entry the way one pretrained
@@ -112,9 +120,14 @@ class ScoreEnsemble(nn.Module):
                     n_filters=cfg["backbone"]["n_filters"], kernel_size=cfg["backbone"]["kernel_size"],
                 ).to(device).eval()
             else:
-                key = tag
+                # A LoRA member carries its OWN adapters, so it cannot share a cache entry with
+                # another run of the same tag the way a frozen checkpoint can -- keyed by run, like
+                # the raw front end above. A frozen member still shares, which is what keeps a
+                # 30-step PGD over several members affordable.
+                key = f"{tag}:lora:{run}" if exp["lora_rank"] else tag
                 if key not in backbones:
-                    backbones[key] = Backbone.from_pretrained(name, freeze=True).to(device).eval()
+                    backbones[key] = Backbone.from_pretrained(
+                        name, freeze=True, lora_rank=exp["lora_rank"]).to(device).eval()
             head, _ = load_member(run_dir, backbones[key], device)
             tags.append(key)
             heads.append(head)

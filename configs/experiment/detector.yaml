@@ -30,6 +30,9 @@ dropout: 0.2
 encodec_p: 0.0            # features=false only: fraction of each training batch put through EnCodec
 adv_eps: 0.0              # >0: feature-space adversarial training, as a fraction of the feature norm
 adv_steps: 3              # PGD steps used to craft each batch's perturbation
+wav_adv_snr: 0.0          # >0: WAVEFORM adversarial training at this perturbation SNR (dB)
+wav_adv_steps: 3          # PGD steps per batch
+wav_adv_fraction: 0.5     # share of each batch replaced by adversarial examples
 cond_weight: 0.5
 score_only: false         # re-score a FINISHED run: load its model.pt, train nothing
 score_sets: [dev_clean, dev_codec, eval_clean]   # scored with the best checkpoint

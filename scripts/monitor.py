@@ -26,6 +26,7 @@ CLIPS = re.compile(r"clips (?:already )?done:? (\d+) / (\d+)")
 STEP = re.compile(r"epoch (\d+) step (\d+)/(\d+)")
 DONE = ("best epoch", "| wrote ")
 STAMP = "%Y-%m-%d %H:%M:%S"
+WINDOW = 6  # ticks averaged for the rate: enough to ride out one stalled log period
 SPARK = "▁▂▃▄▅▆▇█"
 DIM, BOLD, RESET = "\x1b[2m", "\x1b[1m", "\x1b[0m"
 RED, GREEN, CYAN = "\x1b[31m", "\x1b[32m", "\x1b[36m"
@@ -124,21 +125,34 @@ def progress(lines: list[str], name: str) -> tuple[float, str] | None:
 
 
 def pace(lines: list[str], mtime: float) -> str:
-    """The span the log covers, and, while it is still live, the end clock its rate points to."""
+    """The span the log covers, and, while it is still live, the end clock its recent rate points to.
+
+    The rate comes from the last ``WINDOW`` ticks, not from the whole log. Averaging from the first
+    tick lets one stalled period bias every later estimate: in the eval extraction of 2026-10-10 a
+    single 32-minute stall held the estimate about three times slow for hours after the job had
+    recovered. Under three ticks there is no estimate at all, because one interval cannot be told
+    apart from a stall."""
     started = next((at for ln in lines if (at := stamp(ln)) is not None), None)
     if started is None:
         return "no timestamped lines yet"
     span = f"spans {clock(mtime - started)}"
     found = marks(lines)
-    if len(found) < 2 or found[-1][1] <= found[0][1]:
+    if not found:  # a training log: it ticks per epoch, not in clips
         return span
-    (first_at, first_done, _), (last_at, last_done, total) = found[0], found[-1]
-    gap = (last_at - first_at) / (len(found) - 1)
+    if len(found) < 3:
+        return f"{span}   {len(found)} tick(s): too few for an end estimate"
+    recent = found[-WINDOW:]
+    (first_at, first_done, _), (last_at, last_done, total) = recent[0], recent[-1]
+    if last_done <= first_done:
+        return span
+    gap = (last_at - first_at) / (len(recent) - 1)
     if time.time() - mtime > 2 * gap:
         return f"{span}   quiet for more than two log periods, so no end estimate"
-    left = (total - last_done) * (last_at - first_at) / (last_done - first_done)
+    rate = (last_done - first_done) / (last_at - first_at)
+    left = (total - last_done) / rate
     end = time.strftime("%H:%M", time.localtime(time.time() + left))
-    return f"{span}   {clock(left)} left   ends about {end}"
+    return (f"{span}   {60 * rate:,.0f} clips/min over {len(recent)} ticks   "
+            f"{clock(left)} left   ends about {end}")
 
 
 def gpu_rows() -> list[str]:
@@ -172,8 +186,8 @@ def epoch_rows(path: Path) -> list[str]:
     for record, eer in zip(records[-8:], eers[-8:]):
         mark = f"  {CYAN}best{RESET}" if eer == best else ""
         rows.append(f"{record['epoch']:>5}   {record['train/bce']:>9.4f}   {eer:>8.2f}%{mark}")
-    return rows + ["", f"{DIM}EER{RESET} {sparkline(eers[-40:])}  "
-                       f"{eers[0]:.2f}% → {eers[-1]:.2f}%   best {best:.2f}%  (lower is better)"]
+    return rows + ["", (f"{DIM}EER{RESET} {sparkline(eers[-40:])}  "
+                        f"{eers[0]:.2f}% → {eers[-1]:.2f}%   best {best:.2f}%  (lower is better)")]
 
 
 def newest(pattern: str, n: int) -> list[Path]:
@@ -184,8 +198,8 @@ def main(period: float = 5.0) -> None:
     prepare_stdout()
     while True:
         width = min(shutil.get_terminal_size((100, 30)).columns, 110)
-        out = [f"{BOLD}CAESD monitor{RESET}  {time.strftime('%H:%M:%S')}"
-               f"{DIM}   Ctrl+C stops the view, not the jobs{RESET}", ""]
+        out = [(f"{BOLD}CAESD monitor{RESET}  {time.strftime('%H:%M:%S')}"
+                f"{DIM}   Ctrl+C stops the view, not the jobs{RESET}"), ""]
         out += panel("GPU", gpu_rows(), width) + [""]
         for log in newest("logs_partial/*.log", 3):
             age = (time.time() - log.stat().st_mtime) / 60

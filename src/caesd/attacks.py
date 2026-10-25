@@ -80,6 +80,51 @@ def pgd(score_fn: ScoreFn, wave: torch.Tensor, lengths: torch.Tensor, goal: int,
     return (wave + delta).detach()
 
 
+def adversarial_batch(score_fn: ScoreFn, wave: torch.Tensor, lengths: torch.Tensor,
+                      label: torch.Tensor, snr_db: float, steps: int = 3, fraction: float = 0.5,
+                      norm: str = "l2") -> torch.Tensor:
+    """Replace a random ``fraction`` of the batch with white-box PGD examples aimed at the WRONG
+    class, for adversarial TRAINING. Returns the mixed batch, same shape.
+
+    Why a fraction and not all of it. Training purely on attacked audio is the version that destroys
+    clean accuracy, and clean accuracy is the whole result here: 3.21% EER took three weeks to
+    reach. A mixed batch is the standard form and it also costs less -- PGD-``steps`` on half a
+    batch is about 1.5 extra forward-backward passes per step rather than 3.
+
+    Why this is not the same experiment as ``feature_pgd``. That hardened the HEAD against
+    perturbations in FEATURE space while the attacker perturbs the WAVEFORM and arrives through the
+    backbone; the mismatch was flagged in its docstring and the probe duly failed, giving no
+    evidence either way (log, 2026-10-16). This perturbs the waveform and backpropagates through
+    the backbone, so it hardens the path that is actually attacked.
+
+    The crafting runs with the model in EVAL mode: dropout would make the gradient a sample of a
+    random network rather than the network, and the forward passes would otherwise pollute the
+    batch-norm running statistics with adversarial audio. The caller restores train mode.
+    """
+    if not 0.0 < fraction <= 1.0:
+        raise ValueError(f"fraction {fraction} must be in (0, 1]")
+    if snr_db <= 0.0:
+        raise ValueError(f"snr_db {snr_db} must be positive: it is a signal-to-noise ratio in dB")
+    pick = torch.rand(wave.shape[0], device=wave.device) < fraction
+    if not bool(pick.any()):
+        return wave
+    idx = pick.nonzero(as_tuple=True)[0]
+    sub, sub_len, sub_label = wave[idx], lengths[idx], label[idx]
+    # Each clip is pushed towards its wrong class: bona fide (1) down, spoof (0) up.
+    goal = torch.where(sub_label == 1, -1.0, 1.0).to(wave.dtype)[:, None]
+    budget = l2_budget(sub, sub_len, snr_db) if norm == "l2" else torch.full(
+        (sub.shape[0], 1), 10.0 ** (-snr_db / 20.0), device=wave.device, dtype=wave.dtype)
+    # The step size must let the budget be REACHED. pgd's default step_frac of 0.15 is sized for a
+    # 30-step measurement attack: at 3 steps it travels 0.45 of the budget and the realised
+    # perturbation comes out at 36.9 dB when 30 was asked for, a 2.2x weaker attack than the
+    # configuration claims. 2.5 / steps is the usual heuristic and lets the projection saturate.
+    attacked = pgd(score_fn, sub, sub_len, goal, budget, norm=norm, steps=steps,
+                   step_frac=2.5 / steps)
+    out = wave.clone()
+    out[idx] = attacked
+    return out
+
+
 @torch.no_grad()
 def spsa(score_fn: ScoreFn, wave: torch.Tensor, lengths: torch.Tensor, goal: int, budget: torch.Tensor,
          norm: str = "l2", steps: int = 30, step_frac: float = 0.15, n_samples: int = 8,

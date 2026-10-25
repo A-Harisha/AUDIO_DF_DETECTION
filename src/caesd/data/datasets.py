@@ -39,7 +39,12 @@ class AudioDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         row = self.manifest.iloc[idx]
-        wave = read_audio(row["path"], offset=int(row["offset"]), size=int(row["size"]))
+        # offset < 0 means ``path`` is a LOOSE audio file, not a byte range inside a tar. ASVspoof 5
+        # ships as tars and is read in place; an out-of-domain set such as in-the-wild is loose
+        # files, and inventing a fake offset for it would be worse than one explicit sentinel.
+        offset = int(row["offset"])
+        wave = (read_audio(row["path"]) if offset < 0
+                else read_audio(row["path"], offset=offset, size=int(row["size"])))
         if wave.size > self.max_len:
             start = np.random.randint(0, wave.size - self.max_len + 1) if self.train else 0
             wave = wave[start : start + self.max_len]
