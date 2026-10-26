@@ -1,0 +1,85 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{ustc2024}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\citation{wavlm}
+\citation{xlsr}
+\citation{lora}
+\citation{aasist}
+\citation{serrano2025}
+\citation{rawboost}
+\citation{encodec}
+\citation{malafide}
+\citation{malacopula}
+\citation{asvspoof5}
+\citation{ustc2024}
+\citation{szuafs}
+\citation{asvspoof5}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related work}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Data}{2}{section.3}\protected@file@percent }
+\newlabel{sec:data}{{3}{2}{Data}{section.3}{}}
+\citation{wavlm}
+\citation{lora}
+\citation{encodec}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Corpora. ASVspoof~5 attack sets are disjoint across partitions, so every reported number is on unseen spoofing systems. Train and development are entirely uncoded; 75\% of the evaluation set carries one of eleven real codecs.}}{3}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:data}{{1}{3}{Corpora. ASVspoof~5 attack sets are disjoint across partitions, so every reported number is on unseen spoofing systems. Train and development are entirely uncoded; 75\% of the evaluation set carries one of eleven real codecs}{table.caption.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces (a) Partition composition. (b) Evaluation-set channel conditions. The selection split contains none of the eleven coded conditions the evaluation set is judged on.}}{3}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:dataset}{{1}{3}{(a) Partition composition. (b) Evaluation-set channel conditions. The selection split contains none of the eleven coded conditions the evaluation set is judged on}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Systems}{3}{section.4}\protected@file@percent }
+\citation{aasist}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces All four members share the waveform pipeline, the augmentation policy and the adapted WavLM-Large backbone, and differ only in the back-end that turns per-layer frames into a score.}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:arch}{{2}{4}{All four members share the waveform pipeline, the augmentation policy and the adapted WavLM-Large backbone, and differ only in the back-end that turns per-layer frames into a score}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Protocol}{4}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{4}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Members}{4}{subsection.6.1}\protected@file@percent }
+\citation{malafide,malacopula}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces The four members. All share everything but the back-end. Dev select is the mean \textsc  {eer}{} over the clean and codec development views; in-the-wild is out-of-domain and reporting only. $\rho _{\text  {Pool}}$ is the Pearson correlation of evaluation scores with the Pool member.}}{5}{table.caption.4}\protected@file@percent }
+\newlabel{tab:members}{{2}{5}{The four members. All share everything but the back-end. Dev select is the mean \eer {} over the clean and codec development views; in-the-wild is out-of-domain and reporting only. $\rho _{\text {Pool}}$ is the Pearson correlation of evaluation scores with the Pool member}{table.caption.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Training behaviour. Left: development \textsc  {eer}{}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}, still in progress at submission.}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:curves}{{3}{5}{Training behaviour. Left: development \eer {}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}, still in progress at submission}{figure.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Conditions and attacks}{5}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}How many systems is a four-member ensemble?}{5}{subsection.6.3}\protected@file@percent }
+\newlabel{sec:rank}{{6.3}{5}{How many systems is a four-member ensemble?}{subsection.6.3}{}}
+\citation{ustc2024}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Left: DET curves on the evaluation set; solid curves are fusions. Right: per-attack \textsc  {eer}{} of the selected system. The pooled number is dominated by A28; nine of sixteen attacks sit below 1.5\%, and the adversarial attacks (hatched) are not the hard ones.}}{6}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:det}{{4}{6}{Left: DET curves on the evaluation set; solid curves are fusions. Right: per-attack \eer {} of the selected system. The pooled number is dominated by A28; nine of sixteen attacks sit below 1.5\%, and the adversarial attacks (hatched) are not the hard ones}{figure.caption.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Per-condition \textsc  {eer}{}. The neural codecs C04 and C07 (shaded) are the hardest conditions for every member, and the development split contains neither.}}{6}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:codec}{{5}{6}{Per-condition \eer {}. The neural codecs C04 and C07 (shaded) are the hardest conditions for every member, and the development split contains neither}{figure.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Selection fails, and we report both numbers}{6}{subsection.6.4}\protected@file@percent }
+\newlabel{sec:selection}{{6.4}{6}{Selection fails, and we report both numbers}{subsection.6.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces (a) Score correlation on the evaluation set. (b) Eigen-spectrum of that matrix: the first component explains 95.5\% of the variance. (c) Its loadings are within 0.006 of $0.50$ on every member---the first component \emph  {is} the unweighted mean.}}{7}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:spectrum}{{6}{7}{(a) Score correlation on the evaluation set. (b) Eigen-spectrum of that matrix: the first component explains 95.5\% of the variance. (c) Its loadings are within 0.006 of $0.50$ on every member---the first component \emph {is} the unweighted mean}{figure.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Member subsets ranked by development \textsc  {eer}{}, top four of fifteen, plus the best subset on evaluation. The protocol selects row~1. The oracle row is shown for comparison and is \emph  {not} claimed as a result.}}{7}{table.caption.9}\protected@file@percent }
+\newlabel{tab:selection}{{3}{7}{Member subsets ranked by development \eer {}, top four of fifteen, plus the best subset on evaluation. The protocol selects row~1. The oracle row is shown for comparison and is \emph {not} claimed as a result}{table.caption.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}In-domain and out-of-domain rankings invert}{7}{subsection.6.5}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Development \textsc  {eer}{} against evaluation \textsc  {eer}{} for all 15 member subsets. The dotted line is a least-squares fit. Adding a neural-codec view to the selection set improves the ordering---the three-member system climbs from rank 4 to rank 2---but does not make it predictive.}}{8}{figure.caption.10}\protected@file@percent }
+\newlabel{fig:selection}{{7}{8}{Development \eer {} against evaluation \eer {} for all 15 member subsets. The dotted line is a least-squares fit. Adding a neural-codec view to the selection set improves the ordering---the three-member system climbs from rank 4 to rank 2---but does not make it predictive}{figure.caption.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Four defence routes are closed. The fifth, waveform adversarial training, was still training at submission.}}{8}{table.caption.12}\protected@file@percent }
+\newlabel{tab:robust}{{4}{8}{Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Four defence routes are closed. The fifth, waveform adversarial training, was still training at submission}{table.caption.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Adversarial robustness}{8}{subsection.6.6}\protected@file@percent }
+\newlabel{sec:robust}{{6.6}{8}{Adversarial robustness}{subsection.6.6}{}}
+\citation{ustc2024}
+\citation{szuafs}
+\citation{ustc2024}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Left: every system degrades by 2.5--3.8$\times $ out of domain, and the ordering inverts. Right: progression of this work. Bars with error bars are three-seed means with spread; the remainder are single-seed. The hatched bar is oracle-selected and not claimed.}}{9}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:transfer}{{8}{9}{Left: every system degrades by 2.5--3.8$\times $ out of domain, and the ordering inverts. Right: progression of this work. Bars with error bars are three-seed means with spread; the remainder are single-seed. The hatched bar is oracle-selected and not claimed}{figure.caption.11}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Limitations}{9}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Conclusion}{9}{section.8}\protected@file@percent }
+\bibstyle{plainnat}
+\bibdata{refs}
+\bibcite{xlsr}{{1}{2021}{{Babu et~al.}}{{Babu, Wang, Tjandra, Lakhotia, Xu, Goyal, Singh, von Platen, Saraf, Pino, Baevski, Conneau, and Auli}}}
+\bibcite{wavlm}{{2}{2022}{{Chen et~al.}}{{Chen, Wang, Chen, Wu, Liu, Chen, Li, Kanda, Yoshioka, Xiao, Wu, Zhou, Ren, Qian, Qian, Wu, Zeng, Yu, and Wei}}}
+\bibcite{encodec}{{3}{2022}{{D{\'e}fossez et~al.}}{{D{\'e}fossez, Copet, Synnaeve, and Adi}}}
+\bibcite{lora}{{4}{2022}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
+\bibcite{aasist}{{5}{2022}{{Jung et~al.}}{{Jung, Heo, Tak, Shim, Chung, Lee, Yu, and Evans}}}
+\bibcite{malafide}{{6}{2023}{{Panariello et~al.}}{{Panariello, Ge, Tak, Todisco, and Evans}}}
+\bibcite{serrano2025}{{7}{2025}{{Serrano et~al.}}{{Serrano, Duroselle, Angulo, Bonastre, and Boeffard}}}
+\bibcite{rawboost}{{8}{2022}{{Tak et~al.}}{{Tak, Kamble, Patino, Todisco, and Evans}}}
+\bibcite{malacopula}{{9}{2024}{{Todisco et~al.}}{{Todisco, Panariello, Wang, Delgado, Lee, and Evans}}}
+\bibcite{asvspoof5}{{10}{2024{a}}{{Wang et~al.}}{{Wang, Delgado, Tak, Jung, Shim, Todisco, Kukanov, Liu, Sahidullah, Kinnunen, Evans, Lee, and Yamagishi}}}
+\bibcite{ustc2024}{{11}{2024{b}}{{Wang et~al.}}{{Wang, Fu, Cai, Wang, Hu, Wang, Lu, et~al.}}}
+\bibcite{szuafs}{{12}{2024}{{Xu et~al.}}{{Xu, Zhong, Zheng, Liu, and Li}}}
+\gdef \@abspage@last{11}

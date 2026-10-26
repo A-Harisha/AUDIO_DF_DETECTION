@@ -50,3 +50,8 @@ extend-exclude = ["obsolete"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.11.2",
+]
