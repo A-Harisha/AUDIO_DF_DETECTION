@@ -241,10 +241,18 @@ version we built: a single detector, a group of four, and across two different p
 An attacker who can only poke the detector from outside, with a limited number of tries, succeeds
 about 1\% of the time.
 
-We tried one defence --- training the detector on attacked examples --- in a form that turned out to
-defend the wrong part of the system, and it failed while also making ordinary accuracy much worse. A
-better version of that experiment was still running when this was written, and the full numbers are
-in the technical version of this paper.
+We tried two defences, both of which train the detector on attacked examples. The first defended the
+wrong part of the system; it failed completely and made ordinary accuracy much worse. The second
+defended the right part, and it is the only thing in this project that made an attacker's job
+harder: the success rate fell from 100\% to about 95\% when the attacker can see inside the
+detector, and from 100\% to 74\% when the attacker must work through a copy of it.
+
+That sounds like progress until you read the bill. \textbf{Ordinary accuracy became twice as bad},
+from 3.31\% to 7.09\%, in exchange for taking five percentage points off an attack that still works
+nineteen times in twenty. Nobody would ship that exchange. Our honest conclusion is that these
+detectors cannot currently be protected from a determined attacker at an accuracy anyone would
+accept. We think that is worth saying plainly, because the alternative is a reader assuming the
+problem has been solved.
 
 \section{What we would tell someone starting this}
 

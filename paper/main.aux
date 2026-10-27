@@ -38,8 +38,8 @@
 \citation{malafide,malacopula}
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces The four members. All share everything but the back-end. Dev select is the mean \textsc  {eer}{} over the clean and codec development views; in-the-wild is out-of-domain and reporting only. $\rho _{\text  {Pool}}$ is the Pearson correlation of evaluation scores with the Pool member.}}{5}{table.caption.4}\protected@file@percent }
 \newlabel{tab:members}{{2}{5}{The four members. All share everything but the back-end. Dev select is the mean \eer {} over the clean and codec development views; in-the-wild is out-of-domain and reporting only. $\rho _{\text {Pool}}$ is the Pearson correlation of evaluation scores with the Pool member}{table.caption.4}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Training behaviour. Left: development \textsc  {eer}{}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}, still in progress at submission.}}{5}{figure.caption.5}\protected@file@percent }
-\newlabel{fig:curves}{{3}{5}{Training behaviour. Left: development \eer {}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}, still in progress at submission}{figure.caption.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Training behaviour. Left: development \textsc  {eer}{}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}; it converges to roughly double the development \textsc  {eer}{} of every other member.}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:curves}{{3}{5}{Training behaviour. Left: development \eer {}. Right: training loss. AdvWav is the adversarially trained model of Section~\ref {sec:robust}; it converges to roughly double the development \eer {} of every other member}{figure.caption.5}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Conditions and attacks}{5}{subsection.6.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.3}How many systems is a four-member ensemble?}{5}{subsection.6.3}\protected@file@percent }
 \newlabel{sec:rank}{{6.3}{5}{How many systems is a four-member ensemble?}{subsection.6.3}{}}
@@ -57,8 +57,6 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.5}In-domain and out-of-domain rankings invert}{7}{subsection.6.5}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Development \textsc  {eer}{} against evaluation \textsc  {eer}{} for all 15 member subsets. The dotted line is a least-squares fit. Adding a neural-codec view to the selection set improves the ordering---the three-member system climbs from rank 4 to rank 2---but does not make it predictive.}}{8}{figure.caption.10}\protected@file@percent }
 \newlabel{fig:selection}{{7}{8}{Development \eer {} against evaluation \eer {} for all 15 member subsets. The dotted line is a least-squares fit. Adding a neural-codec view to the selection set improves the ordering---the three-member system climbs from rank 4 to rank 2---but does not make it predictive}{figure.caption.10}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Four defence routes are closed. The fifth, waveform adversarial training, was still training at submission.}}{8}{table.caption.12}\protected@file@percent }
-\newlabel{tab:robust}{{4}{8}{Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Four defence routes are closed. The fifth, waveform adversarial training, was still training at submission}{table.caption.12}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Adversarial robustness}{8}{subsection.6.6}\protected@file@percent }
 \newlabel{sec:robust}{{6.6}{8}{Adversarial robustness}{subsection.6.6}{}}
 \citation{ustc2024}
@@ -75,6 +73,8 @@
 \bibcite{encodec}{{3}{2022}{{D{\'e}fossez et~al.}}{{D{\'e}fossez, Copet, Synnaeve, and Adi}}}
 \bibcite{lora}{{4}{2022}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
 \bibcite{aasist}{{5}{2022}{{Jung et~al.}}{{Jung, Heo, Tak, Shim, Chung, Lee, Yu, and Evans}}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Generated directly from the attack logs, so the table cannot drift from the measurements. Four routes are closed outright; waveform adversarial training is the only one that moves white-box success off 1.000.}}{10}{table.caption.12}\protected@file@percent }
+\newlabel{tab:robust}{{4}{10}{Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained $L_2$ budget; realised SNR is reported, not assumed. Generated directly from the attack logs, so the table cannot drift from the measurements. Four routes are closed outright; waveform adversarial training is the only one that moves white-box success off 1.000}{table.caption.12}{}}
 \bibcite{malafide}{{6}{2023}{{Panariello et~al.}}{{Panariello, Ge, Tak, Todisco, and Evans}}}
 \bibcite{serrano2025}{{7}{2025}{{Serrano et~al.}}{{Serrano, Duroselle, Angulo, Bonastre, and Boeffard}}}
 \bibcite{rawboost}{{8}{2022}{{Tak et~al.}}{{Tak, Kamble, Patino, Todisco, and Evans}}}

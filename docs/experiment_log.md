@@ -1838,3 +1838,36 @@ both about DATA, not models:
 two and three views, paired against the dev-chosen single member at d_EER CI [-0.0012, -0.0008]).
 Best measured system 2.93% / 0.0819, not selectable. Gap to T45: 0.62 points claimable, 0.34
 measured. Robustness untouched at 98-100% attack success.
+
+## 2026-10-27 -- advwav: the fifth route moves, but not far enough
+
+**Claim evaluated.** Does adversarial training applied to the *waveform* path (the surface an
+attacker actually perturbs) buy robustness that feature-space adversarial training could not?
+
+**Setup.** `advwav`: half of each batch replaced by 30 dB PGD examples crafted through the backbone
+(`wav_adv_snr=30`, `wav_adv_steps=3`, `wav_adv_fraction=0.5`). Control `adv_control` is the same
+recipe with the adversarial half removed. Seed 1337. 8 epochs, best epoch 6.
+
+**Accuracy.** Dev select 0.0415 against the control's 0.0150. Eval clean EER 0.0709 against
+lora_enc's 0.0331 -- paired d +0.0378, CI [+0.0372, +0.0384] over 680,774 clips. Codec conditions
+took the worst of it (C07 0.1106, C08 0.1008, C04 0.0991).
+
+**Robustness.** First sub-unity white-box numbers this project has produced:
+
+| attack | advwav | control |
+|---|---|---|
+| white-box PGD 30 dB | 0.953 | 1.000 |
+| white-box PGD 20 dB | 0.967 | 1.000 |
+| transfer PGD 30 dB | 0.739 | 1.000 |
+| transfer PGD 20 dB | 0.951 | 1.000 |
+
+**Reading.** The defence is real -- the control is flat at 1.000 on every row, so the drop is the
+adversarial half and not the schedule. It is also not useful: 3.78 EER points for 4.7 points of
+white-box success. The feature-space row was indeed answering the wrong question (it cost 6.9 more
+EER points and moved success less), so the mismatch I flagged was worth correcting. But the
+conclusion stands as a measurement, not a method: these detectors are not defensible under this
+threat model at usable accuracy.
+
+**Paper.** Table 4 now `\input`s `paper/tables/robustness.tex`, generated from the attack logs, so
+it cannot drift. Figure 3's AdvWav curve is complete. Both papers rebuilt (11 pp / 7 pp, no
+undefined citations).

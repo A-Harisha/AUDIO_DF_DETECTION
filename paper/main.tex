@@ -265,7 +265,8 @@ at the equal error point.
 \centering
 \includegraphics[width=\textwidth]{figures/fig2_training_curves}
 \caption{Training behaviour. Left: development \eer{}. Right: training loss. AdvWav is the
-adversarially trained model of Section~\ref{sec:robust}, still in progress at submission.}
+adversarially trained model of Section~\ref{sec:robust}; it converges to roughly double the
+development \eer{} of every other member.}
 \label{fig:curves}
 \end{figure}
 
@@ -427,37 +428,41 @@ The practical implication is uncomfortable for leaderboard optimisation. Pursuin
 \centering
 \small
 \caption{Attack success at a 0.1\% false-alarm operating point, 20-step PGD under an SNR-constrained
-$L_2$ budget; realised SNR is reported, not assumed. Four defence routes are closed. The fifth,
-waveform adversarial training, was still training at submission.}
+$L_2$ budget; realised SNR is reported, not assumed. Generated directly from the attack logs, so
+the table cannot drift from the measurements. Four routes are closed outright; waveform
+adversarial training is the only one that moves white-box success off 1.000.}
 \label{tab:robust}
-\begin{tabular}{llrrr}
-\toprule
-Defence & Attack & Clean \eer{} & 30\,dB & 20\,dB \\
-\midrule
-single model            & white-box PGD & 4.78 & 1.000 & 1.000 \\
-single model            & SPSA, 320 queries & 4.78 & --- & 0.011 \\
-four layer bands        & white-box PGD & 4.78 & 1.000 & 1.000 \\
-four layer bands        & transfer PGD  & 4.78 & 1.000 & 1.000 \\
-WavLM, surrogate XLS-R  & transfer PGD  & 4.78 & 0.892 & 0.995 \\
-XLS-R, surrogate WavLM  & transfer PGD  & 9.21 & 0.832 & 0.984 \\
-feature-space adv.\ training & white-box PGD & 13.95 & 0.993 & 1.000 \\
-feature-space adv.\ training & transfer PGD  & 13.95 & 0.776 & 0.977 \\
-\bottomrule
-\end{tabular}
+\input{tables/robustness}
 \end{table}
 
 Table~\ref{tab:robust} summarises the robustness measurements. A gradient-bearing attacker succeeds
-on essentially every clip at perturbations of 30\,dB SNR, for every defence we tried: a single model,
-a four-member band ensemble, across two different SSL backbones, and after feature-space adversarial
-training---which additionally destroyed clean accuracy (13.95\% \eer{}). A query-limited black-box
-attacker with 320 queries per clip succeeds on about 1\%.
+on essentially every clip at perturbations of 30\,dB SNR against four of the five defences: a single
+model, a four-member band ensemble, each of two SSL backbones used as the other's surrogate, and
+after feature-space adversarial training---which additionally destroyed clean accuracy (13.95\%
+\eer{}). A query-limited black-box attacker with 320 queries per clip succeeds on about 1\%.
+
+Waveform adversarial training is the one route that moves. Hardening the path the attacker actually
+takes---half of each batch replaced by 30\,dB PGD examples crafted through the backbone---drops
+white-box success from 1.000 to 0.953 at 30\,dB, and transfer success from 1.000 to 0.739. Those are
+the first sub-unity white-box numbers in this table. Its own control, trained identically without
+the adversarial half, sits at 1.000 on every row, so the drop is attributable to the defence rather
+than to the schedule.
+
+The price is severe and we state it plainly. Clean evaluation \eer{} rises from 3.31\% to 7.09\%, a
+paired difference of $+0.0378$ with a 95\% interval of $[+0.0372,\,+0.0384]$ over all 680{,}774
+clips, and the damage concentrates on the codec conditions (C07 11.06\%, C08 10.08\%). Buying a
+4.7-point reduction in white-box attack success for 3.78~\eer{} points of clean accuracy is not a
+trade a deployed system would take. Our contribution here is therefore a measurement rather than a
+method: under this threat model the SSL detectors in this paper are not defensible at usable
+accuracy, and the one defence that attacks the right surface shifts that frontier without crossing
+it.
 
 We flag one methodological point about the feature-space row. That defence hardened the \emph{head}
 against perturbations in \emph{feature} space, while the attacker perturbs the \emph{waveform} and
-arrives through the backbone. The mismatch means its failure is weak evidence: it does not show that
-adversarial training fails here, only that this version of it answers a different question. A
-waveform-domain run---half of each batch replaced by 30\,dB PGD examples crafted through the
-backbone---was still training at submission and is reported as AdvWav in Figure~\ref{fig:curves}.
+arrives through the backbone. The mismatch means its failure was weak evidence, and the waveform run
+above is the corrected version of that experiment. The correction mattered in both directions: it
+recovered 6.9~\eer{} points of clean accuracy relative to the feature-space attempt (7.09\% against
+13.95\%), and it was the change that moved white-box success at all.
 
 \section{Limitations}
 
