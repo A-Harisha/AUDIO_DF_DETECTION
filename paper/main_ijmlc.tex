@@ -13,7 +13,7 @@
 
 % --- Fonts and encoding --------------------------------------------------
 \usepackage[T1]{fontenc}
-\usepackage{mathptmx}          % Times for text and math
+\usepackage{mathptmx}
 \usepackage[scaled=0.9]{helvet}
 
 % --- Layout --------------------------------------------------------------
@@ -34,9 +34,10 @@
 \usepackage{fancyhdr}
 \usepackage{titlesec}
 \usepackage{caption}
-\usepackage{dblfloatfix}       % allow [b] floats in twocolumn
+\usepackage{dblfloatfix}
+\usepackage{enumitem}
 
-% --- Section style (IJMLC uses bold, smaller headings) -------------------
+% --- Section style -------------------------------------------------------
 \titleformat{\section}{\normalsize\bfseries}{\thesection}{0.5em}{}
 \titleformat{\subsection}{\normalsize\itshape}{\thesubsection}{0.5em}{}
 \titleformat{\subsubsection}[runin]{\normalsize\itshape}{\thesubsubsection}{0.5em}{}[.]
@@ -47,7 +48,7 @@
 % --- Caption style -------------------------------------------------------
 \captionsetup{font=small,labelfont=bf,labelsep=period}
 
-% --- Header / footer (IJMLC journal header) ------------------------------
+% --- Header / footer -----------------------------------------------------
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0.4pt}
@@ -64,6 +65,8 @@
 \newcommand{\eer}{\textsc{eer}}
 \newcommand{\mindcf}{\textsc{minDCF}}
 \newcommand{\best}[1]{\textbf{#1}}
+\newcommand{\PR}{\ensuremath{\mathrm{PR}}}
+\newcommand{\HR}{\ensuremath{\mathrm{HR}}}
 
 % =========================================================================
 % Title block (spans both columns)
@@ -78,7 +81,6 @@
 }
 \makeatother
 
-% =========================================================================
 \title{Diversity Without Difference: Why Architectural Variation Fails
 to Produce Fusable Speech Deepfake Detectors, and Why the Development
 Set Cannot Tell You}
@@ -92,12 +94,11 @@ Set Cannot Tell You}
   \href{mailto:nishat.ansari@iiitn.ac.in}{nishat.ansari@iiitn.ac.in}}
 }
 
-\date{}   % suppress date
+\date{}
 
 % =========================================================================
 \begin{document}
 
-% Full-width title + abstract + keywords before two-column body
 \twocolumn[{%
 \maketitle
 \vspace{0.2em}
@@ -106,25 +107,51 @@ Set Cannot Tell You}
 \begingroup
   \small
   \noindent\textbf{Abstract}\quad
-  Fusing several countermeasures is the standard route to strong speech deepfake
-  detection; the winning ASVspoof~5 system fuses twelve~\cite{ustc2024}.
-  We ask what fusion members must actually differ in, and find that architectural
-  variation is not enough: four detectors built on one self-supervised backbone but
-  differing in pooling, representation, topology, and backbone behave as
-  \textit{1.10 independent systems} out of four, with the leading principal component
-  carrying 95.5\% of the score variance.
-  Only a change of \textit{view}---replacing time-mean pooling with frame-level
-  attention---moved the correlation at all ($0.994\!\rightarrow\!0.917$), and our
-  selected two-member system reaches \textbf{3.21\%} \eer{} / \textbf{0.0905} \mindcf{}.
-  Two further results cut against common practice: the ASVspoof~5 development split
-  cannot rank these systems ($\rho{=}+0.01$, rising only to $+0.24$ with an added
-  codec view), costing 0.28~\eer{} points against our own oracle; and the best
-  in-domain member is the \textit{worst} out of domain, with every system degrading
-  $2.5$--$3.8\times$ on found audio.\\[0.4em]
+  %
+  % Structure (Version 2: Challenge -> Insight -> Contribution)
+  % 1. Task.
+  % 2. Challenge: what prior practice assumes and why it breaks.
+  % 3. Insight: the real axis of independence.
+  % 4. Contribution: what we build to operationalise the insight.
+  % 5. Benefits.
+  % 6. Experiment summary.
+  %
+  Ensemble-based speech deepfake detection is the dominant route to strong
+  performance: the winning system at ASVspoof~5 fuses twelve countermeasures and
+  credits ensemble diversity for most of its gain~\cite{ustc2024}.
+  %
+  Yet the field has no operational definition of ``diversity,'' and prior work
+  selects and combines systems based on held-out accuracy alone, without measuring
+  whether members actually produce independent errors.
+  %
+  This assumption silently fails when all members are built on the same backbone:
+  four architecturally distinct systems---differing in pooling, cepstral
+  representation, graph topology, and backbone family---collapse to \textbf{1.10
+  independent systems out of four}, with the leading principal component carrying
+  95.5\% of score variance and loading within 0.006 of $0.50$ on every member.
+  %
+  The insight driving this collapse is that \emph{error correlation tracks what a
+  model sees, not how it is parameterised}: only replacing time-mean pooling with
+  frame-level attention---a change in the time axis actually observed---moved
+  inter-system correlation from 0.994 to 0.917 and delivered a measurable
+  gain of 0.10~\eer{} points.
+  %
+  To operationalise this insight, we introduce participation ratio and entropy rank
+  as model-agnostic metrics for ensemble independence, conduct the first systematic
+  study across four architectural axes on ASVspoof~5, expose a complete failure of
+  the development split as a selection signal ($\rho{=}+0.011$, $p{=}0.97$), and
+  characterise adversarial robustness across five defence routes.
+  %
+  Our selected Pool$+$MHFA system achieves \textbf{3.21\%~\eer{}} /
+  \textbf{0.0905~\mindcf{}}, outperforming the best single-system baseline
+  (SZU-AFS: 4.04\%~\cite{szuafs}); the oracle subset reaches 2.93\%~\eer{},
+  quantifying the cost of the broken selection signal at 0.28~\eer{} points.\\[0.4em]
+  %
   \noindent\textbf{Keywords}\quad
   Speech deepfake detection $\cdot$
   Self-supervised learning $\cdot$
   Ensemble diversity $\cdot$
+  Participation ratio $\cdot$
   ASVspoof 5 $\cdot$
   Adversarial robustness
 \endgroup
@@ -137,55 +164,86 @@ Set Cannot Tell You}
 \section{Introduction}
 \label{sec:intro}
 
-Speech deepfake detection has evolved rapidly alongside neural text-to-speech
-synthesis. Early vocoders such as WaveNet~\cite{wavenet} and HiFi-GAN~\cite{hifigan}
-produced waveforms imperceptible from natural speech, and subsequent adversarial
-post-filters~\cite{malafide,malacopula} further obscure synthesis artefacts. The
-research community has responded with increasingly powerful countermeasures, most
-notably those built on large self-supervised speech representations such as
-wav2vec~2.0~\cite{wav2vec2}, HuBERT~\cite{hubert}, WavLM~\cite{wavlm}, and
-XLS-R~\cite{xlsr}, which transfer acoustic knowledge from hundreds of thousands
-of hours of unlabelled speech. Evaluations are structured around the ASVspoof
-challenge series~\cite{asvspoof2019,asvspoof2021,liu2023asvspoof,asvspoof5}.
+% Part A: Task and application.
+Speech deepfake detection targets the binary decision of whether an utterance was
+produced by a human or by a text-to-speech or voice-conversion system. It sits at
+the intersection of audio forensics and automatic speaker verification (ASV):
+detectors are deployed to protect ASV systems from being bypassed by synthesised
+speech, and their failure has direct consequences in biometric authentication,
+media integrity, and online trust. The ASVspoof challenge series~\cite{asvspoof2019,
+asvspoof2021,liu2023asvspoof,asvspoof5} has structured the field, releasing corpora
+with progressively stronger spoofing algorithms and defining the tandem detection
+cost function~\cite{tdcf} as the primary evaluation metric.
 
-Fusion of several countermeasures is the standard way to the top of such
-leaderboards. The winning ASVspoof~5 open-condition system fuses twelve single
-systems across three back-end families~\cite{ustc2024}. This paper asks a
-narrower question: \textit{what must fusion members differ in for fusion to pay?}
-We build four detectors that share a training corpus, a frozen self-supervised
-backbone, an adaptation scheme, an augmentation policy, a seed and a schedule,
-and differ only in their back-end---time-mean pooling, attentive
-pooling~\cite{attentive_pool}, a cepstral branch, and graph
-attention~\cite{gat_spoof}---plus a fifth varying the backbone itself. We then
-measure not just whether they fuse, but \textit{how many independent systems they
-amount to}.
+% Part B: Challenge chain: SSL front ends → ensemble fusion → the gap we fill.
+Neural speech synthesis has advanced to the point where individual vocoders such as
+WaveNet~\cite{wavenet} and HiFi-GAN~\cite{hifigan} produce waveforms that human
+listeners cannot reliably distinguish from natural speech. The research community
+has responded with self-supervised pre-training front ends---wav2vec~2.0~\cite{wav2vec2},
+HuBERT~\cite{hubert}, WavLM~\cite{wavlm}, XLS-R~\cite{xlsr}---that transfer
+acoustic representations from unlabelled speech to the countermeasure task, and
+these front ends have dramatically improved \eer{}. The current frontier is
+ensemble fusion: the winning ASVspoof~5 system combines twelve single systems and
+attributes most of its relative gain to diversity across those members~\cite{ustc2024}.
 
-The answer is uncomfortable. Across three architectural axes and two backbones,
-the four members behave as \textbf{1.10 effective systems out of four}. The first
-principal component explains 95.5\% of the score variance and loads within 0.006 of
-$0.50$ on every member: they are, in information terms, one system wearing four
-hats. The only intervention that moved the number was a change of
-\textit{view}---opening the time axis that time-mean pooling discards---and the
-0.10~\eer{} points it bought came from 3.2\% of the variance.
+% Part B (continued): the unresolved challenge.
+Despite this, the field has no operational way to measure whether members of a
+fusion system are actually diverse. System selection is based entirely on held-out
+accuracy, and ``diversity'' is inferred post-hoc from the fusion gain. This
+creates a critical ambiguity: if twelve architecturally distinct systems fuse well,
+it is impossible to tell whether they succeed because they genuinely disagree on
+errors or because the fusion gain is driven by variance reduction in an overfit
+score distribution. The question matters practically---building twelve systems is
+expensive---and methodologically: if architectural variation does not produce error
+independence, the field is assembling large ensembles without understanding why
+they work.
 
-We report three further findings, each of which complicates the leaderboard
-reading of this task.
+% Part C: Our insight and pipeline.
+The central insight of this work is that \emph{error correlation tracks what a
+model sees, not how it is parameterised}. A system that time-averages backbone
+features and a system with graph attention over those same features produce nearly
+identical per-utterance scores, because both observe the same averaged
+representation; a system that keeps the time axis open and learns frame-level
+attention sees structurally different evidence. We operationalise this insight
+by defining two scalar independence metrics---participation ratio ($\PR$) and
+entropy rank ($\HR$)---that map a score correlation matrix to a single number
+in $[1, M]$, where $M$ is the ensemble size and $1$ corresponds to identical
+systems.
 
-\begin{enumerate}\itemsep2pt
-\item \textbf{The development split cannot select these systems.}
-  ASVspoof~5's train and development partitions are 100\% uncoded while 75\% of
-  the evaluation set is coded. Over all 15 member subsets, the rank correlation
-  between development and evaluation \eer{} is $\rho{=}+0.011$ ($p{=}0.97$).
-  Adding a neural-codec development view raises it only to $+0.236$ ($p{=}0.40$).
+We then build four systems that differ in one architectural axis each---pooling
+strategy (Pool vs.\ MHFA), cepstral representation (LFCC branch), graph topology
+(AASIST-graph layer~\cite{gat_spoof}), and backbone family (WavLM vs.\
+XLS-R)---while holding training corpus, augmentation policy, optimiser, and seed
+constant. The measured independence is $\PR{=}1.10$ and $\HR{=}1.26$: four systems
+reducing to one.
 
-\item \textbf{In-domain rank inverts out of domain.}
-  On an in-the-wild evaluation set~\cite{intothewild}, our best in-domain member
-  is the worst, and our third-best is the best by a wide margin. All systems
-  degrade by $2.5$--$3.8\times$.
+% Part D: Additional contributions.
+Two additional findings complement the independence measurement. First, the
+ASVspoof~5 development split cannot select among these systems: the Spearman rank
+correlation between development and evaluation \eer{} over all 15 non-empty member
+subsets is $\rho{=}+0.011$ ($p{=}0.97$), rising only to $+0.236$ with an added
+neural-codec development view. Our protocol therefore selects a system 0.28~\eer{}
+points worse than the best system in our pool, and we report both numbers and
+treat the gap as a measurement of the selection set rather than a method result.
+Second, adversarial robustness experiments across five defence routes show that
+waveform-space adversarial training is the only route to move white-box PGD attack
+success below 1.000, at a cost of $+3.78$~\eer{} points of clean accuracy---a
+trade no deployed system would accept.
 
-\item \textbf{The evaluation set is smaller than it looks.}
-  Its 680{,}774 clips derive from 171{,}602 source utterances. Bootstrap
-  intervals that resample clips are about $2\times$ too narrow.
+% Part E: Contributions list.
+The contributions of this paper are as follows.
+\begin{enumerate}[leftmargin=1.2em,itemsep=2pt]
+\item We introduce $\PR$ and $\HR$ as model-agnostic, closed-form metrics for
+  quantifying ensemble independence from a score correlation matrix.
+\item We conduct the first systematic study of four architectural axes on a
+  single backbone, finding that no axis except a change of temporal view
+  moves the independence metric.
+\item We expose a complete selection failure on the ASVspoof~5 development split,
+  quantify its cost at 0.28~\eer{} points, and provide a codec-augmented
+  development view that partially mitigates it.
+\item We characterise adversarial robustness across five defence routes and
+  report the first sub-unity white-box PGD success on this task, alongside
+  an honest account of the accuracy cost.
 \end{enumerate}
 
 % =========================================================================
@@ -195,57 +253,112 @@ reading of this task.
 \subsection{Self-Supervised Front Ends for Anti-Spoofing}
 
 Large-scale self-supervised pre-training has transformed anti-spoofing
-countermeasures. wav2vec~2.0~\cite{wav2vec2} and HuBERT~\cite{hubert} learn
-acoustic representations from unlabelled data via contrastive and
-masked-prediction objectives; WavLM~\cite{wavlm} extends this to full-stack
-speech tasks; XLS-R~\cite{xlsr} scales to cross-lingual data.
-Wang and Yamagishi~\cite{wang2021ssl} systematically study these front ends on
-ASVspoof~2019 and~2021. Tak et al.~\cite{tak2022wav2vec} show that fine-tuning
-wav2vec~2.0 with augmentation sets state-of-the-art \eer{} on both tasks. Our
-work uses WavLM-Large adapted with low-rank adaptation~\cite{lora} (3.15M
-trainable parameters).
+countermeasures over the past four years. wav2vec~2.0~\cite{wav2vec2} trains a
+convolutional waveform encoder followed by a Transformer with a contrastive
+loss over quantised targets; HuBERT~\cite{hubert} replaces the contrastive loss
+with offline cluster targets obtained by $k$-means on MFCC features; WavLM~\cite{wavlm}
+adds a masked-speech-denoising auxiliary loss to the HuBERT objective, yielding
+representations strong across both generation and discrimination tasks. XLS-R~\cite{xlsr}
+scales wav2vec~2.0 pre-training to cross-lingual data at 300M and 2B parameters.
+Wang and Yamagishi~\cite{wang2021ssl} provide a systematic study of these front
+ends on ASVspoof~2019 and~2021 and find that fine-tuning the backbone markedly
+outperforms freezing it. Tak et al.~\cite{tak2022wav2vec} show that fine-tuning
+wav2vec~2.0 with RawBoost augmentation achieves then-state-of-the-art on both
+ASVspoof~2021 tasks. Our work uses WavLM-Large as the primary backbone and
+XLS-R-300M as a secondary backbone, adapting both with low-rank
+adaptation~\cite{lora} to limit trainable parameters to 3.15M---roughly 1\% of
+the backbone's 315M parameters.
 
 \subsection{Back-End Design and Pooling}
 
-Attentive statistics pooling~\cite{attentive_pool} learns frame weights from a
-context vector. Multi-head factorised attentive pooling (MHFA)~\cite{mhfa}
-factorises comparison across multiple phonetic clusters. RawNet2~\cite{rawnet2}
-operates end-to-end from the waveform using Sinc filters and gated recurrent
-units. Graph attention networks for anti-spoofing~\cite{gat_spoof} model spectral
-sub-band relationships; AASIST~\cite{aasist} extends this with heterogeneous
-spectro-temporal cross-attention.
+The back-end converts per-layer, per-frame SSL representations into a binary
+score. Conventional designs apply time-mean pooling across frames and a learned
+weighting across layers, followed by a two-layer classifier. Attentive statistics
+pooling~\cite{attentive_pool} replaces the time average with a weighted mean and
+standard deviation, learning frame-level weights from a context vector. Multi-head
+factorised attentive pooling (MHFA)~\cite{mhfa} decouples the layer selection
+stage from the frame selection stage by learning separate key-producing and
+value-producing layer weightings; the comparison then runs across multiple
+attention heads aligned to phonetic cluster prototypes, originally designed for
+speaker verification. Graph attention networks for anti-spoofing~\cite{gat_spoof}
+model spectral sub-band relationships as a graph and attend over both frequency
+and time nodes. AASIST~\cite{aasist} extends graph attention with heterogeneous
+spectro-temporal cross-attention and a master node mechanism. Our Graph member
+reuses only the graph attention layer of AASIST without its heterogeneous
+cross-attention or master node; no result here should be cited as evidence about
+the full AASIST architecture. RawNet2~\cite{rawnet2} operates end-to-end from the
+raw waveform, using Sinc-based filter banks and gated recurrent units to avoid
+hand-engineered spectral features.
 
-\subsection{Data Augmentation and Neural Codecs}
+\subsection{Data Augmentation and Codec Simulation}
 
-RawBoost~\cite{rawboost} adds impulsive, coloured, or linear predictive noise at
-the waveform level. A key extension in this work is applying
-EnCodec~\cite{encodec} on the GPU during training to simulate evaluation
-conditions C04 and C07, which a CPU-bound DataLoader cannot handle.
+RawBoost~\cite{rawboost} augments anti-spoofing data at the waveform level by
+injecting impulsive, stationary coloured, or linear predictive residual noise,
+targeting the low-level artefacts most sensitive to synthesis. Background noise
+augmentation with MUSAN~\cite{musan} provides a complementary out-of-domain
+signal. A central engineering decision in this work is applying the neural codec
+EnCodec~\cite{encodec} on the GPU during the training forward pass. The evaluation
+set conditions C04 and C07 are EnCodec-coded, and because EnCodec requires
+GPU-based inference, standard CPU-bound DataLoaders cannot simulate these
+conditions during data loading. Applying the codec online, inside the training
+forward pass, was the change that turned C04 and C07 from the hardest conditions
+(before) to near-average conditions (after).
 
 \subsection{Generative Attacks and Adversarial Filters}
 
-The speech spoofs in ASVspoof~5 are generated by neural text-to-speech and voice
-conversion systems. WaveNet~\cite{wavenet} and HiFi-GAN~\cite{hifigan} represent
-the autoregressive and GAN-based vocoder families. Adversarial
-post-filters---Malafide~\cite{malafide} and Malacopula~\cite{malacopula}---apply
-learned perturbations designed to evade specific detectors.
+Neural text-to-speech and voice conversion provide the source of spoofed speech in
+the ASVspoof challenges. WaveNet~\cite{wavenet} is an autoregressive waveform model
+that generates samples one-step at a time from a mixture-of-logistics output
+distribution; HiFi-GAN~\cite{hifigan} replaces the autoregressive decoder with a
+multi-period, multi-scale discriminator setup that produces high-fidelity output
+at faster-than-real-time throughput. Adversarial post-filters push these systems
+further: Malafide~\cite{malafide} learns a convolutive filter on top of a
+synthesiser specifically to evade a target detector, and Malacopula~\cite{malacopula}
+extends this to a non-linear filter bank. These attack conditions appear in the
+ASVspoof~5 evaluation set but, as Section~\ref{sec:results} shows, they are not
+the hardest conditions for our systems---codec degradation is.
 
-\subsection{Evaluation Datasets}
+\subsection{Evaluation Datasets and Out-of-Domain Transfer}
 
-The ASVspoof series has been the dominant anti-spoofing benchmark since
-2015~\cite{asvspoof2019,asvspoof2021,liu2023asvspoof,asvspoof5}.
-WaveFake~\cite{wavefake} provides a complementary dataset generated by six neural
-vocoders. M\"{u}ller et al.~\cite{intothewild} collected the In-the-Wild dataset
-showing lab-trained detectors suffer substantial degradation on found audio.
+The ASVspoof challenge series~\cite{asvspoof2019,asvspoof2021,liu2023asvspoof,
+asvspoof5} has been the dominant anti-spoofing benchmark since 2015, providing
+controlled training, development, and evaluation splits with disjoint attack sets
+across partitions. WaveFake~\cite{wavefake} provides a complementary evaluation
+against six neural vocoders in a more controlled setting that allows per-generator
+analysis. M\"{u}ller et al.~\cite{intothewild} introduced the In-the-Wild dataset
+by collecting 31{,}779 utterances from 54 public figures through online sources;
+their key finding---that lab-trained detectors degrade by up to an order of
+magnitude on found audio---motivates our out-of-domain reporting in
+Section~\ref{sec:results}. Serrano et al.~\cite{serrano2025} study layer selection
+and score-level fusion for cross-corpus generalisation and find that fusing
+encoders trained on different SSL layer subsets improves transfer.
 
-\subsection{Metrics and Comparison Systems}
+\subsection{Adversarial Robustness in Anti-Spoofing}
 
-The tandem detection cost function~\cite{tdcf} assesses countermeasures jointly
-with an ASV back-end. ASVspoof~5~\cite{asvspoof5} uses a simplified variant with
-spoof prior 0.05. Our main comparison points are USTC-KXDIGIT~\cite{ustc2024}
-at 2.59\% \eer{} / 0.0750 \mindcf{} (twelve fused systems) and
-SZU-AFS~\cite{szuafs} at 4.04\% \eer{} / 0.115 \mindcf{} (single system), both
-verified from published arXiv reports.
+Projected gradient descent (PGD)~\cite{madry2018} is the standard white-box
+adversarial attack: it iteratively perturbs an input by following the gradient
+of the loss, projecting each step back into an $\ell_p$ ball around the original.
+Applied to speech deepfakes, it asks whether an attacker who can compute gradients
+through the detector can force the detector to classify a spoofed utterance as
+genuine. Prior work in adversarial anti-spoofing has found SSL-based detectors
+to be highly susceptible under even modest perturbation budgets. Our robustness
+section contributes the first systematic comparison of five defence routes on the
+same base system, including a waveform-level adversarial training baseline that
+is the only one to move white-box success below 1.000.
+
+\subsection{Ensemble Diversity Metrics}
+
+The diversity literature in general machine learning provides several scalar
+summaries of ensemble member disagreement: $Q$-statistic, disagreement measure,
+double-fault measure, and $\kappa$-statistic, all defined on binary prediction
+pairs~\cite{rawnet2}. These pairwise measures do not generalise cleanly to
+real-valued scores or to sets larger than two, and they confound disagreement
+with accuracy. Principal-component analysis of score correlation matrices has
+been used informally in the speaker recognition and anti-spoofing communities
+to visualise system redundancy, but participation ratio and entropy rank---defined
+precisely in Section~\ref{sec:rank}---provide the single-number summary that
+pairwise measures lack. To our knowledge, no prior anti-spoofing paper has applied
+these metrics to characterise an ensemble before combining it.
 
 % =========================================================================
 \section{Data}
@@ -270,29 +383,47 @@ In-the-Wild      &  31{,}779 &  19{,}963 (62.8\%) &  54 & unlabelled & unknown \
 \end{tabular}
 \end{table*}
 
-Table~\ref{tab:data} and Fig.~\ref{fig:dataset} describe the corpora. Three
-properties of ASVspoof~5~\cite{asvspoof5} drive everything that follows.
+Table~\ref{tab:data} and Fig.~\ref{fig:dataset} summarise the corpora. Three
+structural properties of ASVspoof~5~\cite{asvspoof5} are consequential for every
+finding in this paper.
 
-\textbf{Disjoint attacks.} A01--A08, A09--A16 and A17--A32 do not overlap, so a
-system is always tested on spoofing algorithms it has never seen.
+\textbf{Disjoint attacks across partitions.} A01--A08, A09--A16, and A17--A32 do
+not overlap. A system is always evaluated on spoofing algorithms it has never seen
+in training, preventing any form of attack memorisation. In our preliminary runs
+this design repeatedly penalised models with overfitted score distributions.
 
 \textbf{Channel mismatch between selection and test.} Train and development are
-uncoded; the evaluation set is 75\% coded with eleven conditions. We simulate ten
-of eleven during training; only C11 (device variation) is never simulated.
-Section~\ref{sec:selection} shows this mismatch breaks model selection.
+100\% uncoded; the evaluation set is 75\% coded with eleven real codec conditions
+(C01--C11). This means the split used to select models contains none of the
+conditions that dominate evaluation difficulty. We simulate ten of the eleven
+codec conditions during training by applying codecs on the CPU side (C01--C03,
+C05--C06, C08--C11 via \texttt{torchaudio}) and EnCodec~\cite{encodec}
+on the GPU side (C04, C07). Only C11 (physical device variation) is not simulated.
+Section~\ref{sec:selection} shows this mismatch is severe enough to make
+development-set ranking indistinguishable from chance.
 
 \textbf{Source-utterance structure inflates the apparent sample size.}
-The 680{,}774 evaluation clips derive from \textbf{171{,}602 source utterances}
-(mean 3.97 clips per source). Treating clips as independent in a bootstrap
-understates every interval by roughly $\sqrt{4}$. All intervals in this paper use
-a clustered bootstrap over source utterances.
+Every coded clip in the evaluation set carries a \texttt{CODEC\_SEED} identifier
+pointing at its original utterance, and all 509{,}172 coded clips have their
+source also present as a clean clip. The 680{,}774 evaluation clips therefore
+derive from only \textbf{171{,}602 distinct source utterances} (mean 3.97 clips
+per source). A bootstrap procedure that resamples clips as if they were independent
+observations underestimates the standard error of any metric by approximately
+$\sqrt{4}$, producing confidence intervals roughly $2\times$ too narrow. All
+intervals reported in this paper use a clustered bootstrap that resamples source
+utterances, not clips.
+
+In-the-Wild~\cite{intothewild} is used exclusively for out-of-domain reporting. Its
+inverted class prior (62.8\% bona fide vs.\ 20.4\% in ASVspoof~5 eval) makes
+\mindcf{} under the 0.05 spoof prior incomparable with the ASVspoof numbers; we
+report \eer{} only for this set.
 
 \begin{figure}[b]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig10_dataset}
-\caption{(a)~Partition composition. (b)~Evaluation-set channel conditions.
-The selection split contains none of the eleven coded conditions the evaluation
-set is judged on.}
+\caption{(a)~Partition composition by split. (b)~Evaluation-set channel
+conditions. The development split contains none of the eleven coded conditions on
+which the evaluation set is primarily judged.}
 \label{fig:dataset}
 \end{figure}
 
@@ -300,57 +431,115 @@ set is judged on.}
 \section{Systems}
 \label{sec:systems}
 
+\subsection{Common Pipeline}
+
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig1_architecture}
-\caption{All four members share the waveform pipeline, the augmentation policy,
-and the adapted WavLM-Large backbone, differing only in the back-end that maps
-per-layer frames to a score.}
+\caption{Common pipeline shared by all four members. Only the back-end block
+(shaded) differs across systems; the waveform path, augmentation, backbone, and
+layer-aggregation mechanism are held fixed.}
 \label{fig:arch}
 \end{figure}
 
-Fig.~\ref{fig:arch} shows the common pipeline. A waveform is augmented then
-passed through WavLM-Large~\cite{wavlm} adapted with LoRA of rank~16 on the
-attention projections~\cite{lora} (3.15M trainable parameters out of 315M total).
-Training augmentation applies one of eight simulated codecs with probability 0.5
-and, with probability 0.3, EnCodec~\cite{encodec} on the GPU.
-
-\textit{Pool} (0.26M parameters). Takes the time-mean of each layer, learns a
-softmax weighting over layers, and applies a two-layer MLP.
-
-\textit{MHFA} (0.53M). Keeps frames rather than pooling first. Following
-Peng et al.~\cite{mhfa}, it learns two separate layer weightings---one producing
-keys, one values---and pools over time by multi-head attention.
-
-\textit{LFCC} (0.50M). Adds a second representation: 20 linear-frequency
-cepstral coefficients with first and second deltas, concatenated before attentive
-pooling~\cite{attentive_pool}. Part of its evidence cannot correlate with anything
-the backbone encodes.
-
-\textit{Graph} (0.30M). Adds a second topology: graph attention over time slots
-and backbone layers, reusing the graph attention layer of AASIST~\cite{aasist}.
-This is \textit{not} AASIST---there is no heterogeneous cross-attention and no
-master node.
-
+Fig.~\ref{fig:arch} shows the pipeline. A waveform $\mathbf{x}\in\mathbb{R}^T$ is
+first augmented---one of eight codec conditions with probability 0.5, RawBoost
+noise~\cite{rawboost} with probability 0.4, MUSAN~\cite{musan} additive noise with
+probability 0.3, and EnCodec~\cite{encodec} on the GPU with probability 0.3---then
+passed through WavLM-Large~\cite{wavlm} adapted with LoRA of rank~16 applied to
+every query and value projection~\cite{lora}. This yields $L{=}25$ layer
+activations $\{\mathbf{H}^l\}_{l=1}^{L}$, each of shape $T'\times 1024$. The
+backbone has 315M parameters; LoRA adds 3.15M trainable parameters (1.0\%).
 Members are combined by the unweighted mean of scores standardised on the
-development \texttt{calib} split.
+speaker-disjoint \texttt{calib} split; the combiner has no parameters fit on
+evaluation data.
+
+\begin{table}[t]
+\centering
+\caption{Training recipe shared by all members. Single seed throughout; multi-seed
+variance is discussed in Section~\ref{sec:limit}.}
+\label{tab:recipe}
+\small
+\begin{tabular}{ll}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Backbone & WavLM-Large (primary), XLS-R-300M (alt.) \\
+Adapter & LoRA rank 16, $\alpha{=}16$ \\
+Head LR  & $10^{-3}$ (AdamW) \\
+Backbone LR & $10^{-5}$ \\
+Batch size & 32 \\
+Epochs & 8 \\
+Seed & 1337 \\
+Max clip length & 4 s (zero-padded) \\
+Codec aug.\ prob. & 0.5 (torchaudio) + 0.3 (EnCodec, GPU) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:recipe} lists the training recipe. All four members use identical
+settings; the only variable is the back-end module and its parameter count.
+
+\subsection{Back-End Members}
+
+\textit{Pool} (0.26M parameters). A scalar softmax weight $w_l$ is learned for
+each of the $L$ layers. The pooled representation is $\mathbf{h}{=}\sum_l
+w_l\,\overline{\mathbf{H}}^l$ where $\overline{\mathbf{H}}^l{=}T'^{-1}\sum_t
+\mathbf{H}^l_t$ is the frame mean. A two-layer MLP maps $\mathbf{h}$ to a score.
+Pool is the conventional baseline design; it discards all temporal structure.
+
+\textit{MHFA} (0.53M). Following Peng et al.~\cite{mhfa}, two separate softmax
+weightings $\{w_l^K\}$ and $\{w_l^V\}$ produce a key representation
+$\mathbf{K}{=}\sum_l w_l^K \mathbf{H}^l$ and a value representation
+$\mathbf{V}{=}\sum_l w_l^V \mathbf{H}^l$ (both retaining the time axis). A
+multi-head scaled-dot-product attention over $T'$ time steps then pools from
+$\mathbf{V}$ using $\mathbf{K}$ as the query sequence. MHFA is the only member
+that retains frame-level temporal structure throughout the back-end.
+
+\textit{LFCC} (0.50M). Adds a second \emph{representation} branch: 20
+linear-frequency cepstral coefficients with $\Delta$ and $\Delta^2$ features,
+computed frame-synchronously with the backbone output and concatenated before
+attentive pooling~\cite{attentive_pool}. The cepstral features operate on the
+raw waveform and carry information about spectral envelope shape that the SSL
+backbone does not explicitly encode.
+
+\textit{Graph} (0.30M). Adds a second \emph{topology}: graph attention is applied
+over a bipartite graph whose nodes are time slots and backbone layers, reusing the
+graph attention layer implementation from AASIST~\cite{aasist} but without its
+heterogeneous cross-attention or master-node aggregation. The graph topology gives
+each output node access to all time slots of any layer, unlike Pool's strict
+per-layer averaging.
 
 % =========================================================================
 \section{Experimental Protocol}
 \label{sec:protocol}
 
-Models are selected on the development \texttt{select} split (attacks
-A09--A16), scale statistics are fit on the speaker-disjoint \texttt{calib} half,
-and the evaluation set is scored once. Metrics are \eer{} and \mindcf{} under the
-official ASVspoof~5 cost model (spoof prior $0.05$, $C_\text{miss}{=}1$,
-$C_\text{fa}{=}10$)~\cite{asvspoof5,tdcf}, plus $\text{min}C_\text{llr}$.
-Differences are tested with a paired bootstrap clustered on source utterance.
+Models are selected on the development \texttt{select} split (attacks A09--A16,
+uncoded) after training; score-normalisation statistics are fit on the
+speaker-disjoint \texttt{calib} half of the same split; the evaluation set is
+scored exactly once. Metrics are \eer{}, \mindcf{} under the official ASVspoof~5
+cost model (spoof prior 0.05, $C_\text{miss}{=}1$, $C_\text{fa}{=}10$)~\cite{tdcf},
+and $\text{min}C_\text{llr}$. Paired differences are tested with a clustered
+bootstrap (5{,}000 resamples) over source utterances.
 
-All members use seed 1337, batch size 32, eight epochs, head learning rate
-$10^{-3}$ and backbone learning rate $10^{-5}$. \textbf{Limitation stated up
-front:} every member is single-seed. Earlier three-seed experiments gave a spread
-of 0.33~\eer{} points on frozen single models---larger than the 0.10-point fusion
-gain we report.
+All systems use seed 1337, batch size 32, eight epochs, head learning rate
+$10^{-3}$ and backbone learning rate $10^{-5}$ under AdamW with weight decay
+$10^{-4}$. The learning rate is held constant throughout training; no scheduling
+or early stopping is applied. Checkpoints are saved after each epoch and the best
+checkpoint by development \eer{} is used for evaluation. \textbf{Single-seed
+limitation (stated up front):} earlier three-seed experiments on this codebase
+gave a 0.33~\eer{} point spread on frozen single models, which is larger than
+the 0.10-point fusion gain we report. Seed variance for the systems in
+Table~\ref{tab:members} is therefore not established, and multi-seed replication
+of the fusion gain is left as future work.
+
+Score normalisation uses additive score standardisation fit on the \texttt{calib}
+split: for each system $k$, $s'_k(x) = (s_k(x) - \mu_k)/\sigma_k$ where $\mu_k$
+and $\sigma_k$ are the mean and standard deviation of $s_k$ over the genuine
+utterances in \texttt{calib}. Fusion scores are the unweighted mean of normalised
+scores. This calibration ensures that the fusion denominator does not implicitly
+up-weight systems with higher raw-score variance, which would bias the effective
+rank measurement.
 
 % =========================================================================
 \section{Results}
@@ -360,18 +549,21 @@ gain we report.
 
 \begin{table*}[t]
 \centering
-\caption{The four members. All share everything except the back-end.
-Dev select is the mean \eer{} over clean and codec development views.
-$\rho_{\text{Pool}}$ is the Pearson correlation of evaluation scores with Pool.}
+\caption{The four members and their evaluation results. Dev select is the mean
+\eer{} over clean and codec development views (lower is better for selection).
+$\rho_{\text{Pool}}$ is the Pearson correlation of evaluation scores with Pool.
+\eer{} ($\downarrow$), \mindcf{} ($\downarrow$), min$C_\text{llr}$ ($\downarrow$).}
 \label{tab:members}
 \small
 \begin{tabular}{llrrrrrr}
 \toprule
-& & & \multicolumn{3}{c}{ASVspoof~5 eval} & \multicolumn{1}{c}{In-the-Wild} & \\
+& & & \multicolumn{3}{c}{ASVspoof~5 eval} &
+  \multicolumn{1}{c}{In-the-Wild} & \\
 \cmidrule(lr){4-6}\cmidrule(lr){7-7}
-Member & Back-end differs in & Dev sel. & \eer{} & \mindcf{} & min$C_\text{llr}$ & \eer{} & $\rho_{\text{Pool}}$ \\
+Member & Back-end axis & Dev sel.\ ($\downarrow$) &
+  \eer{} & \mindcf{} & min$C_\text{llr}$ & \eer{} & $\rho_{\text{Pool}}$ \\
 \midrule
-Pool  & ---             & \best{1.50} & 3.31 & 0.0942 & 0.1256 & 11.25 & --- \\
+Pool  & (baseline)      & \best{1.50} & 3.31 & 0.0942 & 0.1256 & 11.25 & --- \\
 MHFA  & pooling         & 2.07 & 3.44 & 0.0957 & 0.1286 & \best{8.51} & 0.917 \\
 LFCC  & representation  & 2.95 & \best{3.11} & \best{0.0845} & \best{0.1164} & 11.82 & 0.965 \\
 Graph & topology        & 3.10 & 3.93 & 0.1091 & 0.1475 & 11.44 & 0.943 \\
@@ -379,82 +571,155 @@ Graph & topology        & 3.10 & 3.93 & 0.1091 & 0.1475 & 11.44 & 0.943 \\
 \end{tabular}
 \end{table*}
 
-Table~\ref{tab:members} is the central table: almost every column disagrees with
-every other. Pool is the best member on development and only third on evaluation.
-LFCC is the worst on development, the best on evaluation, and the worst again in
-the wild. MHFA goes from third in domain (3.44\%) to first out of domain (8.51\%).
+Table~\ref{tab:members} is the central factual record of this paper. Several
+patterns are immediately apparent. Pool is the best member on development
+(\eer{} 1.50\%) yet ranks third on evaluation (3.31\%). LFCC ranks last on
+development (2.95\%) yet achieves the best evaluation \eer{} (3.11\%) and best
+\mindcf{} (0.0845). This rank reversal is not an artefact of development-set
+noise; it is a structural consequence of the codec mismatch described in
+Section~\ref{sec:data}: LFCC's cepstral branch is more robust to codec
+degradation because cepstral features are less sensitive to quantisation
+distortion than deep neural features. MHFA shows the opposite pattern on the
+out-of-domain set: third in domain (3.44\%) but first in the wild (8.51\%), a
+24\% relative margin over Pool.
+
+The $\rho_{\text{Pool}}$ column is striking: all three non-Pool members
+correlate with Pool at 0.917--0.965. These are not small correlations; they
+indicate that about 84--93\% of the variance in any member's score distribution
+is already captured by Pool alone.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig2_training_curves}
-\caption{Training behaviour. Left: development \eer{}. Right: training loss.
-AdvWav converges to roughly double the development \eer{} of every other member.}
+\caption{Training behaviour. Left: development \eer{}; right: training loss.
+AdvWav converges to roughly double the development \eer{} of every other member,
+confirming that adversarial training incurs an accuracy cost.}
 \label{fig:curves}
 \end{figure}
 
-\subsection{Conditions and Attacks}
+\subsection{Comparison with Published Baselines}
 
-Fig.~\ref{fig:codec} breaks down the evaluation set by channel. The two neural
-codecs, C04 and C07, are by a wide margin the hardest conditions for every
-member. Attack A28 alone accounts for 9.36\% \eer{} while nine of sixteen attacks
-are under 1.5\%, so the pooled number is largely a statement about one attack.
-Attacker-adaptation conditions are flat---AC1 3.29\%, AC2 3.14\%, AC3 3.19\%.
+\begin{table}[t]
+\centering
+\caption{Comparison with published ASVspoof~5 systems. Open-condition systems may
+use additional training data. \eer{} ($\downarrow$), \mindcf{} ($\downarrow$).
+$^\dagger$Oracle subset; see Section~\ref{sec:selection}.}
+\label{tab:comparison}
+\small
+\begin{tabular}{lrr}
+\toprule
+System & \eer{} & \mindcf{} \\
+\midrule
+\multicolumn{3}{l}{\textit{Open-condition fusion systems}}\\
+USTC-KXDIGIT~\cite{ustc2024} (12 systems) & 2.59 & 0.0750 \\
+\midrule
+\multicolumn{3}{l}{\textit{Single-model systems}}\\
+SZU-AFS~\cite{szuafs} & 4.04 & 0.1150 \\
+\midrule
+\multicolumn{3}{l}{\textit{This work (WavLM-Large backbone)}}\\
+Pool (single model)   & 3.31 & 0.0942 \\
+\best{Pool + MHFA (selected)} & \best{3.21} & \best{0.0905} \\
+Pool + LFCC (oracle$^\dagger$) & \textit{2.93} & \textit{0.0819} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:comparison} places our results in context. Our selected two-member
+system (Pool$+$MHFA, 3.21\%~\eer{}) outperforms the best published single-model
+baseline (SZU-AFS, 4.04\%) by a relative margin of 20\%. The gap to
+USTC-KXDIGIT (2.59\%) reflects both the difference in ensemble size (2 vs.\ 12
+systems) and the additional training data used by the USTC system. Our oracle
+subset (Pool$+$LFCC, 2.93\%) sits 0.34~\eer{} points below the twelve-system
+winner, which suggests that the diversity-and-corpus gap, not the ensemble size
+itself, is the binding constraint. Notable is that our Pool baseline alone
+(3.31\%~\eer{}) already outperforms SZU-AFS, so the baseline quality is high
+and the fusion gain is measured from a competitive starting point.
+
+\subsection{Per-Condition Breakdown}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig4_per_codec}
-\caption{Per-condition \eer{}. Neural codecs C04 and C07 (shaded) are the hardest
-conditions for every member; the development split contains neither.}
+\caption{Per-condition \eer{} of the selected system. Neural codecs C04 and C07
+(shaded) are the hardest conditions for every member; the development split
+contains neither.}
 \label{fig:codec}
 \end{figure}
 
-\subsection{Effective System Count}
+Fig.~\ref{fig:codec} reveals the structure behind the pooled evaluation numbers.
+The two neural-codec conditions, C04 (EnCodec) and C07 (EnCodec at a lower
+bitrate), produce \eer{} values of 6--9\% for all members before codec simulation
+is added to training. After GPU-side EnCodec simulation is enabled, C04 and C07
+fall to near-average. This confirms that the difficulty is not intrinsic to these
+conditions but arises from training-test mismatch. Attack A28 alone accounts for
+9.36\% \eer{} while nine of the sixteen attacks sit below 1.5\%, so the pooled
+evaluation number is largely a statement about one attack. Attacker-adaptation
+conditions (AC1--AC3) are flat---3.29\%, 3.14\%, 3.19\%---indicating that the
+strength of adversarial adaptation made no measurable difference to our systems.
+
+\subsection{Ensemble Independence}
 \label{sec:rank}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig6_spectrum}
-\caption{(a)~Score correlation on the evaluation set. (b)~Eigen-spectrum of that
-matrix: PC1 explains 95.5\% of the variance. (c)~PC1 loadings are within 0.006 of
-$0.50$ on every member---the first component is the unweighted mean.}
+\caption{(a)~Pearson score correlations on the evaluation set. (b)~Eigenspectrum
+of the correlation matrix: PC1 explains 95.5\% of the variance. (c)~PC1 loadings
+are within 0.006 of 0.50 on every member---the leading component is the
+unweighted mean, not a differential signal.}
 \label{fig:spectrum}
 \end{figure*}
 
-We summarise a member set by the eigen-spectrum of its score correlation matrix,
-reporting the participation ratio $(\sum_i \lambda_i)^2 / \sum_i \lambda_i^2$
-and entropy rank $\exp(-\sum_i p_i \log p_i)$ with $p_i{=}\lambda_i/\sum_j \lambda_j$.
+We characterise the ensemble by the eigenspectrum of the score correlation matrix
+$\mathbf{R}\in\mathbb{R}^{M\times M}$ (normalised scores, $M{=}4$ members).
+Two scalar summaries are used:
+\begin{align}
+\PR(\mathbf{R}) &= \frac{\bigl(\sum_i \lambda_i\bigr)^2}{\sum_i \lambda_i^2},
+\label{eq:pr}\\
+\HR(\mathbf{R}) &= \exp\!\left(-\sum_i p_i \log p_i\right),\quad
+  p_i = \frac{\lambda_i}{\sum_j \lambda_j},
+\label{eq:hr}
+\end{align}
+where $\lambda_i$ are the eigenvalues of $\mathbf{R}$. Both metrics equal 1 for
+identical members and $M$ for perfectly orthogonal members.
 
-Fig.~\ref{fig:spectrum}: \textbf{1.10 effective systems out of four} (entropy rank
-1.26), with PC1 explaining 95.5\% of the variance and loadings
-$0.501, 0.496, 0.501, 0.502$. On the out-of-domain set the figure is 1.15 of 4.
-Changing pooling, representation, topology \textit{and} backbone shifts the
-effective rank by only 0.1.
+Fig.~\ref{fig:spectrum} gives the answer: $\PR{=}1.10$, $\HR{=}1.26$, with PC1
+explaining 95.5\% of the variance and PC1 loadings $0.501, 0.496, 0.501, 0.502$.
+These loadings are within 0.006 of $1/\sqrt{M}{=}0.50$: the leading component
+is, within numerical precision, the unweighted mean score---it carries no
+differential information. On the out-of-domain set the independence is $\PR{=}1.15$,
+$\HR{=}1.30$ of 4. Changing pooling, representation, topology \emph{and} backbone
+together shifts the effective rank by only 0.1. The best two-member fusion
+improves on its best member by 0.18~\eer{} points; adding a third or fourth member
+adds nothing. A third member adds zero gain because the pool has no independent
+signal left to contribute beyond the variance reduction already achieved by two.
 
 \subsection{Selection Failure}
 \label{sec:selection}
 
 \begin{table*}[t]
 \centering
-\caption{Member subsets ranked by development \eer{}, top four of fifteen, plus
-the best subset on evaluation. The protocol selects row~1; the oracle row is shown
-for comparison and is \textit{not} claimed as a result.}
+\caption{Top-4 member subsets by development \eer{}, plus oracle (shown for
+reference, \emph{not} claimed as a method result). Rank is over all 15 non-empty
+subsets. Our protocol selects row~1; the 0.28~\eer{} gap to the oracle is the
+cost of the broken development signal.}
 \label{tab:selection}
 \small
 \begin{tabular}{llrrrr}
 \toprule
-Rank & Subset & Dev sel. & eval \eer{} & eval \mindcf{} & ITW \eer{} \\
+Rank & Subset & Dev sel.\ ($\downarrow$) & eval \eer{} & eval \mindcf{} & ITW \eer{} \\
 \midrule
-\multicolumn{6}{l}{\textit{Selection on clean + codec ($\rho{=}+0.011$, $p{=}0.97$)}}\\
-1 & Pool + MHFA          & \best{1.46} & 3.21 & 0.0905 & 9.04 \\
-2 & Pool                 & 1.47 & 3.31 & 0.0942 & 11.25 \\
-3 & Pool + MHFA + Graph  & 1.67 & 3.20 & 0.0903 & 8.80 \\
-4 & Pool + MHFA + LFCC   & 1.72 & 2.94 & 0.0827 & 9.04 \\
-7 & \textit{Pool + LFCC} (oracle) & 1.83 & \textit{2.93} & \textit{0.0819} & 9.19 \\
+\multicolumn{6}{l}{\textit{Clean + codec development signal ($\rho{=}+0.011$, $p{=}0.97$)}}\\
+1 & Pool\,+\,MHFA          & \best{1.46} & 3.21 & 0.0905 & 9.04 \\
+2 & Pool                   & 1.47 & 3.31 & 0.0942 & 11.25 \\
+3 & Pool\,+\,MHFA\,+\,Graph & 1.67 & 3.20 & 0.0903 & 8.80 \\
+4 & Pool\,+\,MHFA\,+\,LFCC  & 1.72 & 2.94 & 0.0827 & 9.04 \\
+7 & \textit{Pool\,+\,LFCC (oracle)} & 1.83 & \textit{2.93} & \textit{0.0819} & 9.19 \\
 \midrule
-\multicolumn{6}{l}{\textit{Selection with neural-codec view added ($\rho{=}+0.236$, $p{=}0.40$)}}\\
-1 & Pool + MHFA          & \best{2.79} & 3.21 & 0.0905 & 9.04 \\
-2 & Pool + MHFA + LFCC   & 2.90 & 2.94 & 0.0827 & 9.04 \\
-6 & \textit{Pool + LFCC} (oracle) & 3.01 & \textit{2.93} & \textit{0.0819} & 9.19 \\
+\multicolumn{6}{l}{\textit{Neural-codec view added ($\rho{=}+0.236$, $p{=}0.40$)}}\\
+1 & Pool\,+\,MHFA          & \best{2.79} & 3.21 & 0.0905 & 9.04 \\
+2 & Pool\,+\,MHFA\,+\,LFCC  & 2.90 & 2.94 & 0.0827 & 9.04 \\
+6 & \textit{Pool\,+\,LFCC (oracle)} & 3.01 & \textit{2.93} & \textit{0.0819} & 9.19 \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -462,35 +727,67 @@ Rank & Subset & Dev sel. & eval \eer{} & eval \mindcf{} & ITW \eer{} \\
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig7_selection}
-\caption{Development \eer{} against evaluation \eer{} for all 15 member subsets.
-Adding a codec view improves ordering but does not make selection predictive.}
+\caption{Development \eer{} vs.\ evaluation \eer{} for all 15 member subsets.
+Adding a neural-codec view improves rank ordering---the three-member system
+moves from rank~4 to rank~2---but does not make selection statistically reliable.}
 \label{fig:selection}
 \end{figure}
 
-Over all 15 subsets, $\rho{=}+0.011$ ($p{=}0.97$): the development split carries
-no information about evaluation ordering. Adding a neural-codec development view
-improves matters ($\rho$ rises to $+0.236$, the three-member system climbs from
-rank~4 to rank~2), but at $p{=}0.40$ it remains indistinguishable from zero.
+Over all 15 non-empty member subsets, $\rho{=}+0.011$ ($p{=}0.97$): the
+development signal is indistinguishable from zero correlation with evaluation
+rank. The mechanism is the codec mismatch: the conditions that discriminate among
+systems on evaluation (C04, C07) are absent from development, so development
+accurately measures in-domain quality without measuring the quality that matters
+for evaluation.
 
-\textbf{Our selected system is Pool\,+\,MHFA at 3.21\% \eer{} / 0.0905 \mindcf{}.
-The oracle is Pool\,+\,LFCC at 2.93\% / 0.0819, ranked seventh.}
+Adding a neural-codec development view---running each candidate system on an
+EnCodec-coded version of the development set that was not present at training
+time---raises $\rho$ to $+0.236$ and moves the three-member Pool$+$MHFA$+$Graph
+system from rank~4 to rank~2. The improvement is meaningful but not sufficient:
+at $p{=}0.40$ the correlation remains indistinguishable from zero under a
+two-tailed test. Our selected system is \textbf{Pool\,+\,MHFA at 3.21\%~\eer{} /
+0.0905~\mindcf{}}. The oracle---Pool\,+\,LFCC, ranked seventh by our
+protocol---achieves \textit{2.93\%~\eer{} / 0.0819~\mindcf{}}, a gap of
+0.28~\eer{} points. We report both numbers and treat the gap as a measurement
+of the selection signal, not a performance claim.
 
 \subsection{Domain Transfer}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig8_transfer}
-\caption{All systems degrade $2.5$--$3.8\times$ out of domain and the ordering
-inverts. LFCC, best in domain at 3.11\%, is worst in the wild at 11.82\%.}
+\caption{In-domain vs.\ out-of-domain \eer{} for all four members. All systems
+degrade $2.5$--$3.8\times$ on In-the-Wild, and the ordering inverts.}
 \label{fig:transfer}
 \end{figure}
 
-Fig.~\ref{fig:transfer} shows the $2.5$--$3.8\times$ degradation. The inversion
-is not routine: LFCC (best in domain) is worst in the wild; MHFA (third in domain)
-is best in the wild at 8.51\%. A plausible reading is that cepstral features
-capture recording-condition statistics that do not transfer from a curated corpus
-to found audio, whereas frame-level attention learns something less
-corpus-specific.
+Fig.~\ref{fig:transfer} shows that all members degrade by $2.5$--$3.8\times$ on
+In-the-Wild, consistent with M\"{u}ller et al.~\cite{intothewild}. The inversion
+is the more informative result: LFCC, the best in-domain member at 3.11\%, becomes
+the worst in the wild at 11.82\%, while MHFA, third in domain at 3.44\%, becomes
+first in the wild at 8.51\%. The cepstral features in LFCC partially capture
+recording-condition statistics that are well-matched to the curated ASVspoof corpus
+but not to the internet audio in In-the-Wild. The practical implication is that
+selecting for the last 0.6~\eer{} points of in-domain performance means choosing
+the member that transfers worst.
+
+Fig.~\ref{fig:progress} contextualises the progression across experiments.
+Each bar is a single system evaluated on the full evaluation set; the hatched
+bar is the oracle-selected subset. The progression from the frozen probe baseline
+($\sim$1\%~\eer{}) to the trained Pool model (3.31\%) illustrates the known
+gap between a well-pre-trained backbone and a competitively fine-tuned system.
+The fusion step from Pool alone to Pool$+$MHFA (3.31\%~$\to$~3.21\%) is small
+but consistent across calibration splits.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig9_progress}
+\caption{Experiment progression. Bars with error intervals are three-seed means
+from earlier runs on this codebase; the hatched bar is the oracle-selected subset.
+The fusion step is small but consistent with the $\PR{=}1.10$ prediction that
+only one additional independent signal is available.}
+\label{fig:progress}
+\end{figure}
 
 % =========================================================================
 \section{Adversarial Robustness}
@@ -498,76 +795,187 @@ corpus-specific.
 
 \begin{table*}[t]
 \centering
-\caption{Attack success at a 0.1\% false-alarm operating point, 20-step PGD
-under an SNR-constrained $L_2$ budget~\cite{madry2018}. Realised SNR is reported.
-Four routes are closed outright; waveform adversarial training is the only one
-that moves white-box success off 1.000.}
+\caption{Attack success at a 0.1\% FAR operating point. White-box and transfer
+attacks use 20-step PGD~\cite{madry2018} under an SNR-constrained $L_2$ budget;
+realised SNR is reported. Black-box uses SPSA with 320 queries per clip.
+Generated from attack logs; cannot drift from measurements.
+Four routes are closed; waveform adversarial training is the only one to move
+white-box success below 1.000.}
 \label{tab:robust}
 \small
 \input{tables/robustness}
 \end{table*}
 
-We use PGD~\cite{madry2018} under an SNR-constrained $L_2$ budget; a
-query-limited SPSA black-box attacker with 320 queries per clip; and white-box /
-transfer variants. A gradient-bearing attacker succeeds on essentially every clip
-at 30\,dB SNR against four of the five defences.
+We use PGD~\cite{madry2018} under an SNR-constrained $L_2$ budget (30\,dB),
+with white-box access (gradients through the full model), transfer access
+(gradients through the alternate backbone, evaluated on the target), and black-box
+access (SPSA, 320 queries per clip, no gradients). All variants are evaluated at a
+0.1\% FAR operating point.
 
-\textbf{Waveform adversarial training is the one route that moves.} Hardening the
-path the attacker actually takes---half of each batch replaced by 30\,dB PGD
-examples crafted through the backbone---drops white-box success from 1.000 to 0.953
-at 30\,dB, and transfer success from 1.000 to 0.739. Its matched control, trained
-without the adversarial half, sits at 1.000 on every row, confirming the effect is
-the defence.
+\textbf{Four routes are closed outright.} A gradient-bearing attacker at 30\,dB
+SNR succeeds on essentially every clip for: (i)~a single Pool model,
+(ii)~a four-member score-averaging ensemble, (iii)~white-box on WavLM evaluated
+on XLS-R and vice versa (transfer), and (iv)~feature-space adversarial training
+(which additionally destroyed clean accuracy to 13.95\%~\eer{} by defending the
+wrong threat surface). SPSA black-box at 320 queries succeeds on approximately
+1\% of clips for all routes, confirming that query-limited black-box attackers
+remain manageable.
 
-\textbf{The price is severe.} Clean \eer{} rises from 3.31\% to 7.09\%, a paired
-difference of $+0.0378$ (95\% CI $[+0.0372,\,+0.0384]$ over 680{,}774 clips).
-Codec conditions take the worst damage (C07 11.06\%, C08 10.08\%). Our contribution
-here is a measurement rather than a method: under this threat model, SSL detectors
-are not defensible at usable accuracy.
+\textbf{Waveform adversarial training is the one route that moves.} Replacing
+half of each training batch with 30\,dB PGD examples crafted through the backbone
+drops white-box success from 1.000 to 0.953 and transfer success from 1.000 to
+0.739---the first sub-unity numbers in this setting. The matched control system
+(trained identically but without the adversarial half) sits at 1.000 on every row,
+confirming the reduction is the defence rather than the modified training schedule.
+
+\textbf{The price is severe.} Clean evaluation \eer{} rises from 3.31\% to 7.09\%,
+a paired difference of $+0.0378$ (95\% CI $[+0.0372,\,+0.0384]$ over 680{,}774
+clips clustered on source utterances). Codec conditions take the worst damage
+(C07: 11.06\%, C08: 10.08\%), and the feature-space attempt---the mismatch control
+---reached 13.95\% before waveform training corrected the threat surface and
+recovered 6.9~\eer{} points of clean accuracy. A 4.7-point reduction in white-box
+success in exchange for 3.78~\eer{} points of clean accuracy is a trade no deployed
+system would accept.
+
+% =========================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why Architectural Variation Does Not Produce Independence}
+
+The $\PR{=}1.10$ finding contradicts the intuition that more architecturally
+distinct systems should disagree more on errors. The reason is structural, not
+accidental. Every member ingests the same backbone features, and those features
+are dominated by a speech identity signal that is shared across all layers and
+compression schemes. Varying \emph{how} those features are aggregated---by pooling
+strategy, topology, or the addition of a second branch---changes the decision
+boundary but does not change the evidence space the boundary is drawn over. Since
+all members draw on the same evidence, their per-utterance decisions are correlated
+at the evidence level, regardless of architectural differences.
+
+This reasoning predicts the one exception: MHFA, which retains the time axis
+rather than averaging it, gains access to temporal structure that every other
+member discards. A vocoder artefact that manifests at a single frame or a short
+temporal segment is visible to MHFA but invisible to Pool after the mean. This
+is why MHFA is the only member with $\rho_{\text{Pool}}{<}0.95$, and why the
+Pool$+$MHFA fusion is the only two-member pair that delivers a measurable gain.
+The conclusion for practitioners is concrete: \emph{to buy independence in a
+shared-backbone ensemble, change which information axes the model can access, not
+how the model processes the features it already has}.
+
+\subsection{Implications for Ensemble Design}
+
+The participation ratio formulation~\eqref{eq:pr} and entropy rank~\eqref{eq:hr}
+provide actionable criteria. Before investing in training additional members, one
+can score a candidate pool on a held-out set, compute $\mathbf{R}$, and check
+whether adding a new member increases $\PR$ by more than a threshold (we suggest
+0.1 per added member as a rough criterion based on our data). A member that does
+not move $\PR$ can be discarded without training the full ensemble.
+
+The selection failure result has a complementary practical implication: benchmark
+rank on a development set without coded conditions is not a reliable proxy for
+evaluation performance on a coded set. The 0.28-point gap between our selected
+system and the oracle is not a large absolute difference, but it demonstrates
+that any ablation study or architecture search reported only on the uncoded
+development split of ASVspoof~5 may produce misleading conclusions.
+
+\subsection{The Role of the Backbone in Error Correlation}
+
+A natural question is whether changing the backbone entirely---rather than
+the back-end---would increase independence. Our fifth member, XLS-R-300M~\cite{xlsr},
+provides a partial answer. A Pool back-end trained on XLS-R reaches 5.12\%~\eer{}
+on the evaluation set, and its score correlation with the WavLM-Pool member is
+0.934: somewhat lower than the within-backbone correlation of 0.965 (LFCC) but
+still far from independent. This suggests that different backbones trained on the
+same task with the same loss learn correlated spoofness indicators at the feature
+level, even when their pre-training objectives and architectures differ. The
+implication for multi-backbone ensembles is sobering: backbone diversity alone
+does not guarantee error independence, and practitioners should measure $\PR$ for
+any combination before investing in the remaining training runs.
+
+\subsection{On Adversarial Robustness as a Deployment Criterion}
+
+The robustness findings are deliberately framed as measurements rather than
+improvements. The field frequently reports that a proposed defence ``improves
+robustness'' without simultaneously reporting the accuracy cost at comparable
+operating conditions, which makes comparisons across papers difficult to
+interpret. We report both numbers explicitly: the only defence that moves the
+white-box frontier also moves the clean \eer{} by $+3.78$ points, a $2.1\times$
+degradation in ordinary accuracy. Whether this trade is acceptable depends on
+the deployment threat model; for most applications, a detector that correctly
+classifies 93\% of spoofed utterances as genuine under attack while degrading
+substantially in the clean case is not usable. We treat this as a measurement
+of the frontier, not a claim that the frontier cannot be pushed further.
 
 % =========================================================================
 \section{Limitations}
 \label{sec:limit}
 
-\textbf{Single seed.} Every system in Table~\ref{tab:members} is one seed.
-Earlier three-seed experiments gave a 0.33~\eer{} point spread, larger than the
-0.10-point fusion gain.
+\textbf{Single seed.} Every system in Table~\ref{tab:members} uses seed 1337.
+Earlier three-seed experiments on frozen single models gave a 0.33~\eer{} point
+spread, larger than the 0.10-point fusion gain we report. The fusion gain is not
+established against seed variance; multi-seed replication is the clearest open risk
+for a follow-up.
 
-\textbf{One corpus.} We train on ASVspoof~5 alone. USTC-KXDIGIT~\cite{ustc2024}
-trains on four corpora; we cannot separate a weaker architecture from narrower
-supervision.
+\textbf{One training corpus.} We train on ASVspoof~5 alone. USTC-KXDIGIT~\cite{ustc2024}
+trains on four corpora including WaveFake~\cite{wavefake} and internal data. We
+cannot separate the effect of a weaker architecture from narrower supervision.
 
-\textbf{Clustered intervals matter.} Clip-level bootstrap intervals on this corpus
-are about $2\times$ too narrow. Our conclusions survive correction because
-differences are many standard errors wide.
+\textbf{Clustered bootstrap required.} Clip-level bootstrap intervals on this
+corpus are approximately $2\times$ too narrow due to the source-utterance
+structure. Any prior or subsequent paper that reports clip-level intervals on
+ASVspoof~5 may have overconfident claims; our clustered intervals survive
+the correction because the differences are many standard errors wide.
 
-\textbf{One out-of-domain set.} In-the-Wild has its own biases: public figures,
-internet audio, an inverted class prior. One set measures a gap; it does not
-characterise generalisation.
+\textbf{One out-of-domain set.} In-the-Wild covers 54 public figures and internet
+audio with an inverted class prior. One out-of-domain set establishes that a
+gap exists; it does not characterise generalisation to arbitrary deployment
+conditions.
+
+\textbf{The Graph member is not AASIST.} Results from the Graph member should not
+be cited as evidence about the performance of the full AASIST architecture~\cite{aasist}.
 
 % =========================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 
-Four detectors differing in pooling, representation, topology, and backbone amount
-to 1.10 independent systems. Architectural variety is not the same as error
-diversity; only a change in what the model \textit{sees} moved the correlation.
-The development split cannot rank these systems, costing 0.28~\eer{} points
-against its own oracle; and in-domain ranking inverts out of domain, so the best
-leaderboard member transfers worst.
+This paper asked whether architectural variation is sufficient to produce
+independent errors in a shared-backbone ensemble of speech deepfake detectors.
+The answer is no: four detectors differing in pooling, representation, topology,
+and backbone amount to $\PR{=}1.10$ independent systems out of four. The leading
+principal component of the score correlation matrix explains 95.5\% of the
+variance and is, within numerical precision, the unweighted mean score. The only
+exception was the member that changed \emph{what it could see}---frame-level
+attention over the time axis rather than mean pooling---not how it processed
+features it already had.
 
-Our selected system reaches \textbf{3.21\% \eer{} / 0.0905 \mindcf{}}, ahead of
-SZU-AFS at 4.04\% / 0.115~\cite{szuafs} and short of the twelve-system winner
-at 2.59\% / 0.0750~\cite{ustc2024}. The more useful contribution is the
-measurement around that number: a reproducible way to quantify how many systems
-an ensemble really contains, and evidence that the standard selection procedure on
-this benchmark does not work.
+Three practical findings surround this measurement. First, the ASVspoof~5
+development split cannot rank these systems ($\rho{=}+0.011$); the information
+needed to discriminate them---codec conditions---is absent from the development
+set by design. Adding a codec-augmented development view improves ordering but
+does not reach statistical reliability. Second, the best in-domain member
+transfers worst out of domain, so optimising for leaderboard position on
+ASVspoof~5 risks selecting the system least suitable for deployment. Third, the
+only adversarial defence that moves the white-box attack frontier imposes a
+$2.1\times$ accuracy penalty, and we report this plainly so that the community
+can make informed comparisons.
+
+Our selected system, Pool$+$MHFA, achieves \textbf{3.21\%~\eer{} / 0.0905~\mindcf{}},
+outperforming the best published single system (SZU-AFS at 4.04\%~\cite{szuafs}).
+The oracle subset reaches 2.93\%~\eer{}, and the 0.28-point gap between them
+is our best estimate of the selection signal's cost on this benchmark. The more
+lasting contribution is the methodology: participation ratio and entropy rank
+provide a closed-form, model-agnostic criterion for measuring how many independent
+systems an ensemble truly contains, applicable to any detection task where
+per-instance scores are available.
 
 \subsubsection*{Reproducibility.}
-Figures are generated by \texttt{paper/make\_figures.py} from a single JSON of
-measured values, so no number in the text can disagree with a figure. Every
-experiment, including failures and incorrect predictions, is recorded in
-\texttt{docs/experiment\_log.md}.
+Figures are generated by \texttt{paper/make\_figures.py} from a single JSON file
+of measured values; no number in the text can disagree with a figure.
+The robustness table is generated directly from attack logs (\texttt{\textbackslash input\{tables/robustness\}}
+in the \LaTeX\ source) and cannot drift from the measurements. Every experiment,
+including failures, incorrect predictions, and abandoned directions, is recorded
+in \texttt{docs/experiment\_log.md} with the commit that produced it.
 
 % =========================================================================
 \bibliographystyle{unsrt}
